@@ -1,0 +1,33 @@
+profileId: "quantigo-keypoint-pose-v1"
+name: "Quantigo Keypoint & Polyline Jobs"
+description: "Enforces required graph template nodes, parent containment, L/R symmetry, and polyline continuity."
+isBuiltin: true
+matchers:
+  jobTitleRegex: "keypoint|pose|skeleton|line|polyline"
+  projectIds: []
+  datasetIds: []
+workflowRules:
+  blockOnUnsavedSync: true
+  warnOnEmptyImageWithoutConfirm: true
+tagRules:
+  imageOnlyTags: []
+  objectOnlyTags:
+    - "Occlusion"
+  occlusionOverlapIouThreshold: 0.10
+  occlusionCoverRatioThreshold: 0.15
+  flagForegroundOcclusionFalsePositive: true
+geometryRules:
+  minBoxAreaPx: 64
+  minPolygonVertices: 3
+  minPolylineVertices: 2
+  minMaskAreaPx: 32
+  maxDisconnectedMaskComponents: 8
+  edgeSnapMarginPx: 3
+  minBoxIouTightness: 0.72
+  requireRequiredGraphNodes: true
+visionRules:
+  missedObjectMinConfidence: 0.50
+  minLaplacianSharpness: 32.0
+  ignoreBackgroundBokeh: true
+  enableDepthOcclusionOrdering: true
+classOverrides: {}

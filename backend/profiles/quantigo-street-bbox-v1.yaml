@@ -1,0 +1,58 @@
+profileId: "quantigo-street-bbox-v1"
+name: "Quantigo Street Bounding Box"
+description: "Tuned for high-res street scenes (e.g. 5472x3648) with Human focus, Occlusion tag scoping, and bokeh Building rejection."
+isBuiltin: true
+matchers:
+  jobTitleRegex: "bounding[_ ]?box|street|pedestrian"
+  projectIds: []
+  datasetIds: []
+workflowRules:
+  blockOnUnsavedSync: true
+  warnOnEmptyImageWithoutConfirm: true
+tagRules:
+  imageOnlyTags:
+    - "Night"
+    - "Blurry_Image"
+    - "Low_Resolution"
+  objectOnlyTags:
+    - "Occlusion"
+    - "Truncated"
+    - "Crowded"
+  occlusionOverlapIouThreshold: 0.10
+  occlusionCoverRatioThreshold: 0.15
+  flagForegroundOcclusionFalsePositive: true
+geometryRules:
+  minBoxAreaPx: 144
+  minPolygonVertices: 3
+  minPolylineVertices: 2
+  minMaskAreaPx: 32
+  maxDisconnectedMaskComponents: 8
+  edgeSnapMarginPx: 3
+  minBoxIouTightness: 0.75
+  requireRequiredGraphNodes: true
+visionRules:
+  missedObjectMinConfidence: 0.42
+  minLaplacianSharpness: 38.0
+  ignoreBackgroundBokeh: true
+  enableDepthOcclusionOrdering: true
+classOverrides:
+  Human:
+    enabled: true
+    minAreaPx: 160
+    minSharpness: 30.0
+    detectorConfidence: 0.40
+    suppressMissedObjectPrompts: false
+  Building:
+    enabled: true
+    minAreaPx: 900
+    minSharpness: 70.0
+    detectorConfidence: 0.65
+    suppressMissedObjectPrompts: true
+  Bus:
+    enabled: true
+    minAreaPx: 1200
+    minSharpness: 55.0
+    detectorConfidence: 0.72
+    suppressMissedObjectPrompts: false
+  Car1:
+    enabled: false

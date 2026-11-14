@@ -1,0 +1,34 @@
+profileId: "quantigo-brush-mask-v1"
+name: "Quantigo Brush & Polygon Segmentation"
+description: "Strict island, pinhole, self-intersection, and SAM mask tightness rules for Brush and Polygon jobs."
+isBuiltin: true
+matchers:
+  jobTitleRegex: "brush|polygon|segment|mask"
+  projectIds: []
+  datasetIds: []
+workflowRules:
+  blockOnUnsavedSync: true
+  warnOnEmptyImageWithoutConfirm: true
+tagRules:
+  imageOnlyTags: []
+  objectOnlyTags:
+    - "Occlusion"
+    - "Truncated"
+  occlusionOverlapIouThreshold: 0.12
+  occlusionCoverRatioThreshold: 0.18
+  flagForegroundOcclusionFalsePositive: true
+geometryRules:
+  minBoxAreaPx: 64
+  minPolygonVertices: 4
+  minPolylineVertices: 2
+  minMaskAreaPx: 48
+  maxDisconnectedMaskComponents: 3
+  edgeSnapMarginPx: 3
+  minBoxIouTightness: 0.78
+  requireRequiredGraphNodes: true
+visionRules:
+  missedObjectMinConfidence: 0.48
+  minLaplacianSharpness: 35.0
+  ignoreBackgroundBokeh: true
+  enableDepthOcclusionOrdering: true
+classOverrides: {}

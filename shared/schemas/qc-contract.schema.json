@@ -1,0 +1,2807 @@
+{
+  "$defs": {
+    "AnnotationFigure": {
+      "additionalProperties": false,
+      "properties": {
+        "bitmap": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BitmapData"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "classId": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Classid"
+        },
+        "classTitle": {
+          "title": "Classtitle",
+          "type": "string"
+        },
+        "createdAt": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Createdat"
+        },
+        "figureId": {
+          "title": "Figureid",
+          "type": "string"
+        },
+        "geometryType": {
+          "enum": [
+            "rectangle",
+            "polygon",
+            "bitmap",
+            "polyline",
+            "point",
+            "graph"
+          ],
+          "title": "Geometrytype",
+          "type": "string"
+        },
+        "labelIndex": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Labelindex"
+        },
+        "nodes": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/$defs/GraphNodeValue"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Nodes"
+        },
+        "points": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Points"
+        },
+        "tags": {
+          "items": {
+            "$ref": "#/$defs/TagValue"
+          },
+          "title": "Tags",
+          "type": "array"
+        },
+        "updatedAt": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Updatedat"
+        },
+        "visible": {
+          "default": true,
+          "title": "Visible",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "figureId",
+        "classId",
+        "classTitle",
+        "geometryType"
+      ],
+      "title": "AnnotationFigure",
+      "type": "object"
+    },
+    "ApiErrorDetail": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "enum": [
+            "UNAUTHORIZED",
+            "IMAGE_CACHE_MISS",
+            "INVALID_PAYLOAD",
+            "PROFILE_NOT_FOUND",
+            "JOB_NOT_FOUND",
+            "MODEL_EXECUTION_ERROR"
+          ],
+          "title": "Code",
+          "type": "string"
+        },
+        "details": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Details"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "title": "ApiErrorDetail",
+      "type": "object"
+    },
+    "ApiErrorEnvelope": {
+      "additionalProperties": false,
+      "properties": {
+        "error": {
+          "$ref": "#/$defs/ApiErrorDetail"
+        }
+      },
+      "required": [
+        "error"
+      ],
+      "title": "ApiErrorEnvelope",
+      "type": "object"
+    },
+    "BitmapData": {
+      "additionalProperties": false,
+      "properties": {
+        "data": {
+          "title": "Data",
+          "type": "string"
+        },
+        "origin": {
+          "maxItems": 2,
+          "minItems": 2,
+          "prefixItems": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "title": "Origin",
+          "type": "array"
+        }
+      },
+      "required": [
+        "data",
+        "origin"
+      ],
+      "title": "BitmapData",
+      "type": "object"
+    },
+    "BitmapGeometry": {
+      "additionalProperties": false,
+      "properties": {
+        "bitmap": {
+          "$ref": "#/$defs/BitmapData"
+        },
+        "geometryType": {
+          "const": "bitmap",
+          "title": "Geometrytype",
+          "type": "string"
+        }
+      },
+      "required": [
+        "geometryType",
+        "bitmap"
+      ],
+      "title": "BitmapGeometry",
+      "type": "object"
+    },
+    "CacheStats": {
+      "additionalProperties": false,
+      "properties": {
+        "diskBytes": {
+          "default": 0,
+          "title": "Diskbytes",
+          "type": "integer"
+        },
+        "imageCount": {
+          "default": 0,
+          "title": "Imagecount",
+          "type": "integer"
+        },
+        "maxDiskBytes": {
+          "default": 1073741824,
+          "title": "Maxdiskbytes",
+          "type": "integer"
+        }
+      },
+      "title": "CacheStats",
+      "type": "object"
+    },
+    "CanvasSize": {
+      "additionalProperties": false,
+      "properties": {
+        "height": {
+          "exclusiveMinimum": 0,
+          "title": "Height",
+          "type": "number"
+        },
+        "width": {
+          "exclusiveMinimum": 0,
+          "title": "Width",
+          "type": "number"
+        }
+      },
+      "required": [
+        "width",
+        "height"
+      ],
+      "title": "CanvasSize",
+      "type": "object"
+    },
+    "ClassDefinition": {
+      "additionalProperties": false,
+      "properties": {
+        "classId": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Classid"
+        },
+        "color": {
+          "title": "Color",
+          "type": "string"
+        },
+        "geometryConfig": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GraphConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "shape": {
+          "enum": [
+            "rectangle",
+            "polygon",
+            "bitmap",
+            "polyline",
+            "point",
+            "graph"
+          ],
+          "title": "Shape",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "classId",
+        "title",
+        "shape",
+        "color"
+      ],
+      "title": "ClassDefinition",
+      "type": "object"
+    },
+    "ClassRuleOverride": {
+      "additionalProperties": false,
+      "properties": {
+        "detectorConfidence": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Detectorconfidence"
+        },
+        "enabled": {
+          "default": true,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "forbiddenTags": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Forbiddentags"
+        },
+        "minAreaPx": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Minareapx"
+        },
+        "minSharpness": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Minsharpness"
+        },
+        "requiredTags": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Requiredtags"
+        },
+        "suppressMissedObjectPrompts": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Suppressmissedobjectprompts"
+        }
+      },
+      "title": "ClassRuleOverride",
+      "type": "object"
+    },
+    "DomFigureSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "classTitle": {
+          "title": "Classtitle",
+          "type": "string"
+        },
+        "figureCount": {
+          "minimum": 0,
+          "title": "Figurecount",
+          "type": "integer"
+        },
+        "taggedCount": {
+          "minimum": 0,
+          "title": "Taggedcount",
+          "type": "integer"
+        },
+        "visible": {
+          "default": true,
+          "title": "Visible",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "classTitle",
+        "figureCount",
+        "taggedCount"
+      ],
+      "title": "DomFigureSummary",
+      "type": "object"
+    },
+    "EngineCapabilities": {
+      "additionalProperties": false,
+      "properties": {
+        "degradedReason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Degradedreason"
+        },
+        "device": {
+          "enum": [
+            "mps",
+            "cpu",
+            "none"
+          ],
+          "title": "Device",
+          "type": "string"
+        },
+        "modelsUsed": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Modelsused",
+          "type": "array"
+        }
+      },
+      "required": [
+        "device"
+      ],
+      "title": "EngineCapabilities",
+      "type": "object"
+    },
+    "GeometryRulesConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "edgeSnapMarginPx": {
+          "default": 3,
+          "minimum": 0,
+          "title": "Edgesnapmarginpx",
+          "type": "integer"
+        },
+        "maxDisconnectedMaskComponents": {
+          "default": 8,
+          "minimum": 1,
+          "title": "Maxdisconnectedmaskcomponents",
+          "type": "integer"
+        },
+        "minBoxAreaPx": {
+          "default": 64,
+          "minimum": 1,
+          "title": "Minboxareapx",
+          "type": "integer"
+        },
+        "minBoxIouTightness": {
+          "default": 0.72,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Minboxioutightness",
+          "type": "number"
+        },
+        "minMaskAreaPx": {
+          "default": 32,
+          "minimum": 1,
+          "title": "Minmaskareapx",
+          "type": "integer"
+        },
+        "minPolygonVertices": {
+          "default": 3,
+          "minimum": 3,
+          "title": "Minpolygonvertices",
+          "type": "integer"
+        },
+        "minPolylineVertices": {
+          "default": 2,
+          "minimum": 2,
+          "title": "Minpolylinevertices",
+          "type": "integer"
+        },
+        "requireRequiredGraphNodes": {
+          "default": true,
+          "title": "Requirerequiredgraphnodes",
+          "type": "boolean"
+        }
+      },
+      "title": "GeometryRulesConfig",
+      "type": "object"
+    },
+    "GraphConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "edges": {
+          "items": {
+            "$ref": "#/$defs/GraphEdgeTemplate"
+          },
+          "title": "Edges",
+          "type": "array"
+        },
+        "nodes": {
+          "additionalProperties": {
+            "$ref": "#/$defs/GraphNodeTemplate"
+          },
+          "title": "Nodes",
+          "type": "object"
+        }
+      },
+      "title": "GraphConfig",
+      "type": "object"
+    },
+    "GraphEdgeTemplate": {
+      "additionalProperties": false,
+      "properties": {
+        "color": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Color"
+        },
+        "dst": {
+          "title": "Dst",
+          "type": "string"
+        },
+        "src": {
+          "title": "Src",
+          "type": "string"
+        }
+      },
+      "required": [
+        "src",
+        "dst"
+      ],
+      "title": "GraphEdgeTemplate",
+      "type": "object"
+    },
+    "GraphGeometry": {
+      "additionalProperties": false,
+      "properties": {
+        "geometryType": {
+          "const": "graph",
+          "title": "Geometrytype",
+          "type": "string"
+        },
+        "nodes": {
+          "additionalProperties": {
+            "$ref": "#/$defs/GraphNodeValue"
+          },
+          "title": "Nodes",
+          "type": "object"
+        }
+      },
+      "required": [
+        "geometryType",
+        "nodes"
+      ],
+      "title": "GraphGeometry",
+      "type": "object"
+    },
+    "GraphNodeTemplate": {
+      "additionalProperties": false,
+      "properties": {
+        "color": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Color"
+        },
+        "disabled": {
+          "default": false,
+          "title": "Disabled",
+          "type": "boolean"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "loc": {
+          "anyOf": [
+            {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Loc"
+        }
+      },
+      "required": [
+        "label"
+      ],
+      "title": "GraphNodeTemplate",
+      "type": "object"
+    },
+    "GraphNodeValue": {
+      "additionalProperties": false,
+      "properties": {
+        "disabled": {
+          "default": false,
+          "title": "Disabled",
+          "type": "boolean"
+        },
+        "loc": {
+          "maxItems": 2,
+          "minItems": 2,
+          "prefixItems": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "title": "Loc",
+          "type": "array"
+        }
+      },
+      "required": [
+        "loc"
+      ],
+      "title": "GraphNodeValue",
+      "type": "object"
+    },
+    "HealthResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "cacheStats": {
+          "$ref": "#/$defs/CacheStats"
+        },
+        "device": {
+          "enum": [
+            "mps",
+            "cpu"
+          ],
+          "title": "Device",
+          "type": "string"
+        },
+        "loadedModels": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Loadedmodels",
+          "type": "array"
+        },
+        "status": {
+          "enum": [
+            "ok",
+            "degraded"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "uptimeSeconds": {
+          "minimum": 0.0,
+          "title": "Uptimeseconds",
+          "type": "number"
+        },
+        "version": {
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "version",
+        "device",
+        "cacheStats",
+        "uptimeSeconds"
+      ],
+      "title": "HealthResponse",
+      "type": "object"
+    },
+    "ImageCacheAck": {
+      "additionalProperties": false,
+      "properties": {
+        "bytesStored": {
+          "exclusiveMinimum": 0,
+          "title": "Bytesstored",
+          "type": "integer"
+        },
+        "cached": {
+          "const": true,
+          "default": true,
+          "title": "Cached",
+          "type": "boolean"
+        },
+        "height": {
+          "exclusiveMinimum": 0,
+          "title": "Height",
+          "type": "integer"
+        },
+        "imageHash": {
+          "title": "Imagehash",
+          "type": "string"
+        },
+        "imageId": {
+          "title": "Imageid",
+          "type": "string"
+        },
+        "width": {
+          "exclusiveMinimum": 0,
+          "title": "Width",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "imageId",
+        "imageHash",
+        "width",
+        "height",
+        "bytesStored"
+      ],
+      "title": "ImageCacheAck",
+      "type": "object"
+    },
+    "ImageContext": {
+      "additionalProperties": false,
+      "properties": {
+        "datasetId": {
+          "title": "Datasetid",
+          "type": "string"
+        },
+        "entityId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Entityid"
+        },
+        "fileName": {
+          "title": "Filename",
+          "type": "string"
+        },
+        "height": {
+          "exclusiveMinimum": 0,
+          "title": "Height",
+          "type": "integer"
+        },
+        "imageHash": {
+          "title": "Imagehash",
+          "type": "string"
+        },
+        "imageId": {
+          "title": "Imageid",
+          "type": "string"
+        },
+        "imageUrl": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Imageurl"
+        },
+        "jobId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Jobid"
+        },
+        "jobTitle": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Jobtitle"
+        },
+        "width": {
+          "exclusiveMinimum": 0,
+          "title": "Width",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "imageId",
+        "datasetId",
+        "fileName",
+        "width",
+        "height",
+        "imageHash"
+      ],
+      "title": "ImageContext",
+      "type": "object"
+    },
+    "MissedObjectOverlay": {
+      "additionalProperties": false,
+      "properties": {
+        "bbox": {
+          "maxItems": 4,
+          "minItems": 4,
+          "prefixItems": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "title": "Bbox",
+          "type": "array"
+        },
+        "classTitle": {
+          "title": "Classtitle",
+          "type": "string"
+        },
+        "confidence": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "detectorModel": {
+          "title": "Detectormodel",
+          "type": "string"
+        },
+        "geometryType": {
+          "enum": [
+            "rectangle",
+            "polygon",
+            "bitmap"
+          ],
+          "title": "Geometrytype",
+          "type": "string"
+        },
+        "missedId": {
+          "title": "Missedid",
+          "type": "string"
+        },
+        "outsideViewport": {
+          "title": "Outsideviewport",
+          "type": "boolean"
+        },
+        "polygonPoints": {
+          "anyOf": [
+            {
+              "items": {
+                "items": {
+                  "maxItems": 2,
+                  "minItems": 2,
+                  "prefixItems": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ],
+                  "type": "array"
+                },
+                "type": "array"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Polygonpoints"
+        },
+        "sharpnessScore": {
+          "minimum": 0.0,
+          "title": "Sharpnessscore",
+          "type": "number"
+        },
+        "viewportEdgeDirection": {
+          "anyOf": [
+            {
+              "enum": [
+                "left",
+                "right",
+                "top",
+                "bottom",
+                "top-left",
+                "top-right",
+                "bottom-left",
+                "bottom-right"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Viewportedgedirection"
+        }
+      },
+      "required": [
+        "missedId",
+        "classTitle",
+        "geometryType",
+        "bbox",
+        "confidence",
+        "sharpnessScore",
+        "outsideViewport",
+        "detectorModel"
+      ],
+      "title": "MissedObjectOverlay",
+      "type": "object"
+    },
+    "PointGeometry": {
+      "additionalProperties": false,
+      "properties": {
+        "geometryType": {
+          "const": "point",
+          "title": "Geometrytype",
+          "type": "string"
+        },
+        "points": {
+          "$ref": "#/$defs/SinglePointContainer"
+        }
+      },
+      "required": [
+        "geometryType",
+        "points"
+      ],
+      "title": "PointGeometry",
+      "type": "object"
+    },
+    "PolygonGeometry": {
+      "additionalProperties": false,
+      "properties": {
+        "geometryType": {
+          "const": "polygon",
+          "title": "Geometrytype",
+          "type": "string"
+        },
+        "points": {
+          "$ref": "#/$defs/PolygonPoints"
+        }
+      },
+      "required": [
+        "geometryType",
+        "points"
+      ],
+      "title": "PolygonGeometry",
+      "type": "object"
+    },
+    "PolygonPoints": {
+      "additionalProperties": false,
+      "properties": {
+        "exterior": {
+          "items": {
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "type": "array"
+          },
+          "minItems": 3,
+          "title": "Exterior",
+          "type": "array"
+        },
+        "interior": {
+          "items": {
+            "items": {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "type": "array"
+            },
+            "type": "array"
+          },
+          "title": "Interior",
+          "type": "array"
+        }
+      },
+      "required": [
+        "exterior"
+      ],
+      "title": "PolygonPoints",
+      "type": "object"
+    },
+    "PolylineGeometry": {
+      "additionalProperties": false,
+      "properties": {
+        "geometryType": {
+          "const": "polyline",
+          "title": "Geometrytype",
+          "type": "string"
+        },
+        "points": {
+          "$ref": "#/$defs/PolylinePoints"
+        }
+      },
+      "required": [
+        "geometryType",
+        "points"
+      ],
+      "title": "PolylineGeometry",
+      "type": "object"
+    },
+    "PolylinePoints": {
+      "additionalProperties": false,
+      "properties": {
+        "exterior": {
+          "items": {
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "type": "array"
+          },
+          "minItems": 2,
+          "title": "Exterior",
+          "type": "array"
+        },
+        "interior": {
+          "items": {
+            "items": {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "type": "array"
+            },
+            "type": "array"
+          },
+          "maxItems": 0,
+          "title": "Interior",
+          "type": "array"
+        }
+      },
+      "required": [
+        "exterior"
+      ],
+      "title": "PolylinePoints",
+      "type": "object"
+    },
+    "ProfileListResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "matchedProfileId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Matchedprofileid"
+        },
+        "profiles": {
+          "items": {
+            "$ref": "#/$defs/RuleProfile"
+          },
+          "title": "Profiles",
+          "type": "array"
+        }
+      },
+      "required": [
+        "profiles"
+      ],
+      "title": "ProfileListResponse",
+      "type": "object"
+    },
+    "ProfileMatchers": {
+      "additionalProperties": false,
+      "properties": {
+        "datasetIds": {
+          "items": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "title": "Datasetids",
+          "type": "array"
+        },
+        "jobTitleRegex": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Jobtitleregex"
+        },
+        "projectIds": {
+          "items": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "title": "Projectids",
+          "type": "array"
+        }
+      },
+      "title": "ProfileMatchers",
+      "type": "object"
+    },
+    "ProjectOntology": {
+      "additionalProperties": false,
+      "properties": {
+        "classes": {
+          "items": {
+            "$ref": "#/$defs/ClassDefinition"
+          },
+          "title": "Classes",
+          "type": "array"
+        },
+        "jobClassesToLabel": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Jobclassestolabel"
+        },
+        "jobTagsToLabel": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Jobtagstolabel"
+        },
+        "projectId": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Projectid"
+        },
+        "projectName": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Projectname"
+        },
+        "tags": {
+          "items": {
+            "$ref": "#/$defs/TagDefinition"
+          },
+          "title": "Tags",
+          "type": "array"
+        }
+      },
+      "required": [
+        "projectId",
+        "classes",
+        "tags"
+      ],
+      "title": "ProjectOntology",
+      "type": "object"
+    },
+    "QCAnalyzeRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "asyncIfHeavy": {
+          "default": true,
+          "title": "Asyncifheavy",
+          "type": "boolean"
+        },
+        "domFigureSummaries": {
+          "items": {
+            "$ref": "#/$defs/DomFigureSummary"
+          },
+          "title": "Domfiguresummaries",
+          "type": "array"
+        },
+        "figures": {
+          "items": {
+            "$ref": "#/$defs/AnnotationFigure"
+          },
+          "title": "Figures",
+          "type": "array"
+        },
+        "image": {
+          "$ref": "#/$defs/ImageContext"
+        },
+        "imageTags": {
+          "items": {
+            "$ref": "#/$defs/TagValue"
+          },
+          "title": "Imagetags",
+          "type": "array"
+        },
+        "mode": {
+          "default": "standard",
+          "enum": [
+            "rules",
+            "standard",
+            "deep"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
+        "ontology": {
+          "$ref": "#/$defs/ProjectOntology"
+        },
+        "profileId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Profileid"
+        },
+        "requestId": {
+          "title": "Requestid",
+          "type": "string"
+        },
+        "snapshotSeq": {
+          "minimum": 0,
+          "title": "Snapshotseq",
+          "type": "integer"
+        },
+        "uiState": {
+          "$ref": "#/$defs/UiStateSnapshot"
+        },
+        "viewport": {
+          "$ref": "#/$defs/ViewportMetadata"
+        }
+      },
+      "required": [
+        "requestId",
+        "snapshotSeq",
+        "image",
+        "ontology",
+        "viewport",
+        "uiState"
+      ],
+      "title": "QCAnalyzeRequest",
+      "type": "object"
+    },
+    "QCErrorDetail": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "title": "QCErrorDetail",
+      "type": "object"
+    },
+    "QCFinding": {
+      "additionalProperties": false,
+      "properties": {
+        "category": {
+          "enum": [
+            "workflow",
+            "tags",
+            "geometry",
+            "missed_objects",
+            "classification",
+            "keypoints"
+          ],
+          "title": "Category",
+          "type": "string"
+        },
+        "confidence": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "figureIds": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Figureids",
+          "type": "array"
+        },
+        "findingId": {
+          "title": "Findingid",
+          "type": "string"
+        },
+        "fingerprint": {
+          "title": "Fingerprint",
+          "type": "string"
+        },
+        "focusRect": {
+          "anyOf": [
+            {
+              "maxItems": 4,
+              "minItems": 4,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Focusrect"
+        },
+        "imageTagNames": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Imagetagnames",
+          "type": "array"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "missedObjectIds": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Missedobjectids",
+          "type": "array"
+        },
+        "outsideViewport": {
+          "default": false,
+          "title": "Outsideviewport",
+          "type": "boolean"
+        },
+        "ruleId": {
+          "title": "Ruleid",
+          "type": "string"
+        },
+        "severity": {
+          "enum": [
+            "blocker",
+            "warning",
+            "info"
+          ],
+          "title": "Severity",
+          "type": "string"
+        },
+        "suggestedFixes": {
+          "items": {
+            "$ref": "#/$defs/QuickFixAction"
+          },
+          "title": "Suggestedfixes",
+          "type": "array"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "findingId",
+        "ruleId",
+        "severity",
+        "category",
+        "title",
+        "message",
+        "confidence",
+        "fingerprint"
+      ],
+      "title": "QCFinding",
+      "type": "object"
+    },
+    "QCResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "analysisId": {
+          "title": "Analysisid",
+          "type": "string"
+        },
+        "engineCapabilities": {
+          "$ref": "#/$defs/EngineCapabilities"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/QCErrorDetail"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "findings": {
+          "items": {
+            "$ref": "#/$defs/QCFinding"
+          },
+          "title": "Findings",
+          "type": "array"
+        },
+        "imageId": {
+          "title": "Imageid",
+          "type": "string"
+        },
+        "jobId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Jobid"
+        },
+        "missedObjects": {
+          "items": {
+            "$ref": "#/$defs/MissedObjectOverlay"
+          },
+          "title": "Missedobjects",
+          "type": "array"
+        },
+        "mode": {
+          "enum": [
+            "rules",
+            "standard",
+            "deep"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
+        "overallScore": {
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Overallscore",
+          "type": "integer"
+        },
+        "profileId": {
+          "title": "Profileid",
+          "type": "string"
+        },
+        "readiness": {
+          "enum": [
+            "ready",
+            "needs_review",
+            "blocked"
+          ],
+          "title": "Readiness",
+          "type": "string"
+        },
+        "requestId": {
+          "title": "Requestid",
+          "type": "string"
+        },
+        "sceneSimulation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneSimulationPlan"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "snapshotSeq": {
+          "title": "Snapshotseq",
+          "type": "integer"
+        },
+        "status": {
+          "enum": [
+            "completed",
+            "queued",
+            "running",
+            "failed"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "summaryCounts": {
+          "$ref": "#/$defs/SummaryCounts"
+        },
+        "timingMs": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "title": "Timingms",
+          "type": "object"
+        }
+      },
+      "required": [
+        "analysisId",
+        "requestId",
+        "status",
+        "imageId",
+        "snapshotSeq",
+        "mode",
+        "profileId",
+        "overallScore",
+        "readiness",
+        "summaryCounts",
+        "engineCapabilities"
+      ],
+      "title": "QCResponse",
+      "type": "object"
+    },
+    "QuickFixAction": {
+      "additionalProperties": false,
+      "properties": {
+        "actionId": {
+          "title": "Actionid",
+          "type": "string"
+        },
+        "actionType": {
+          "enum": [
+            "highlight_synchronize",
+            "move_tag_image_to_object",
+            "add_object_tag",
+            "remove_object_tag",
+            "remove_image_tag",
+            "focus_viewport",
+            "inspect_figure",
+            "confirm_delete_figure",
+            "toggle_class_visibility",
+            "select_sidebar_class"
+          ],
+          "title": "Actiontype",
+          "type": "string"
+        },
+        "classTitle": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Classtitle"
+        },
+        "focusRect": {
+          "anyOf": [
+            {
+              "maxItems": 4,
+              "minItems": 4,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Focusrect"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "tagName": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tagname"
+        },
+        "tagValue": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tagvalue"
+        },
+        "targetFigureIds": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Targetfigureids"
+        }
+      },
+      "required": [
+        "actionId",
+        "label",
+        "actionType"
+      ],
+      "title": "QuickFixAction",
+      "type": "object"
+    },
+    "RectangleGeometry": {
+      "additionalProperties": false,
+      "properties": {
+        "geometryType": {
+          "const": "rectangle",
+          "title": "Geometrytype",
+          "type": "string"
+        },
+        "points": {
+          "$ref": "#/$defs/RectanglePoints"
+        }
+      },
+      "required": [
+        "geometryType",
+        "points"
+      ],
+      "title": "RectangleGeometry",
+      "type": "object"
+    },
+    "RectanglePoints": {
+      "additionalProperties": false,
+      "properties": {
+        "exterior": {
+          "maxItems": 2,
+          "minItems": 2,
+          "prefixItems": [
+            {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "type": "array"
+            },
+            {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "type": "array"
+            }
+          ],
+          "title": "Exterior",
+          "type": "array"
+        },
+        "interior": {
+          "items": {
+            "items": {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "type": "array"
+            },
+            "type": "array"
+          },
+          "maxItems": 0,
+          "title": "Interior",
+          "type": "array"
+        }
+      },
+      "required": [
+        "exterior"
+      ],
+      "title": "RectanglePoints",
+      "type": "object"
+    },
+    "RuleProfile": {
+      "additionalProperties": false,
+      "properties": {
+        "classOverrides": {
+          "additionalProperties": {
+            "$ref": "#/$defs/ClassRuleOverride"
+          },
+          "title": "Classoverrides",
+          "type": "object"
+        },
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "geometryRules": {
+          "$ref": "#/$defs/GeometryRulesConfig"
+        },
+        "isBuiltin": {
+          "default": false,
+          "title": "Isbuiltin",
+          "type": "boolean"
+        },
+        "matchers": {
+          "$ref": "#/$defs/ProfileMatchers"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "profileId": {
+          "title": "Profileid",
+          "type": "string"
+        },
+        "tagRules": {
+          "$ref": "#/$defs/TagRulesConfig"
+        },
+        "visionRules": {
+          "$ref": "#/$defs/VisionRulesConfig"
+        },
+        "workflowRules": {
+          "$ref": "#/$defs/WorkflowRulesConfig"
+        }
+      },
+      "required": [
+        "profileId",
+        "name",
+        "description"
+      ],
+      "title": "RuleProfile",
+      "type": "object"
+    },
+    "SceneSimulationPlan": {
+      "additionalProperties": false,
+      "properties": {
+        "activeSidebarClassWarning": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Activesidebarclasswarning"
+        },
+        "candidates": {
+          "items": {
+            "$ref": "#/$defs/SimulatedObjectCandidate"
+          },
+          "title": "Candidates",
+          "type": "array"
+        },
+        "classSummaries": {
+          "items": {
+            "$ref": "#/$defs/SimulatedClassSummary"
+          },
+          "title": "Classsummaries",
+          "type": "array"
+        },
+        "completedTargetObjects": {
+          "minimum": 0,
+          "title": "Completedtargetobjects",
+          "type": "integer"
+        },
+        "disambiguationNotes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Disambiguationnotes",
+          "type": "array"
+        },
+        "ignoredOntologyClasses": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Ignoredontologyclasses",
+          "type": "array"
+        },
+        "misplacedImageTags": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Misplacedimagetags",
+          "type": "array"
+        },
+        "primaryTargetClasses": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Primarytargetclasses",
+          "type": "array"
+        },
+        "recommendedImageTags": {
+          "items": {
+            "$ref": "#/$defs/SimulatedTagRecommendation"
+          },
+          "title": "Recommendedimagetags",
+          "type": "array"
+        },
+        "totalTargetObjects": {
+          "minimum": 0,
+          "title": "Totaltargetobjects",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "totalTargetObjects",
+        "completedTargetObjects"
+      ],
+      "title": "SceneSimulationPlan",
+      "type": "object"
+    },
+    "SimulatedClassSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "borderTruncatedCount": {
+          "minimum": 0,
+          "title": "Bordertruncatedcount",
+          "type": "integer"
+        },
+        "classTitle": {
+          "title": "Classtitle",
+          "type": "string"
+        },
+        "completedCount": {
+          "minimum": 0,
+          "title": "Completedcount",
+          "type": "integer"
+        },
+        "foregroundClearCount": {
+          "minimum": 0,
+          "title": "Foregroundclearcount",
+          "type": "integer"
+        },
+        "occludedCount": {
+          "minimum": 0,
+          "title": "Occludedcount",
+          "type": "integer"
+        },
+        "recommendedShape": {
+          "enum": [
+            "rectangle",
+            "polygon",
+            "bitmap",
+            "polyline",
+            "point",
+            "graph"
+          ],
+          "title": "Recommendedshape",
+          "type": "string"
+        },
+        "remainingCount": {
+          "minimum": 0,
+          "title": "Remainingcount",
+          "type": "integer"
+        },
+        "tagCounts": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "title": "Tagcounts",
+          "type": "object"
+        },
+        "totalCount": {
+          "minimum": 0,
+          "title": "Totalcount",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "classTitle",
+        "recommendedShape",
+        "totalCount",
+        "completedCount",
+        "remainingCount",
+        "foregroundClearCount",
+        "occludedCount",
+        "borderTruncatedCount"
+      ],
+      "title": "SimulatedClassSummary",
+      "type": "object"
+    },
+    "SimulatedObjectCandidate": {
+      "additionalProperties": false,
+      "properties": {
+        "bbox": {
+          "maxItems": 4,
+          "minItems": 4,
+          "prefixItems": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "title": "Bbox",
+          "type": "array"
+        },
+        "classTitle": {
+          "title": "Classtitle",
+          "type": "string"
+        },
+        "confidence": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "matchedFigureId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Matchedfigureid"
+        },
+        "occludedBySimIndices": {
+          "items": {
+            "type": "integer"
+          },
+          "title": "Occludedbysimindices",
+          "type": "array"
+        },
+        "outsideViewport": {
+          "title": "Outsideviewport",
+          "type": "boolean"
+        },
+        "overlapCoverRatio": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Overlapcoverratio",
+          "type": "number"
+        },
+        "overlapIouMax": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Overlapioumax",
+          "type": "number"
+        },
+        "polygonPoints": {
+          "anyOf": [
+            {
+              "items": {
+                "items": {
+                  "maxItems": 2,
+                  "minItems": 2,
+                  "prefixItems": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ],
+                  "type": "array"
+                },
+                "type": "array"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Polygonpoints"
+        },
+        "recommendedObjectTags": {
+          "items": {
+            "$ref": "#/$defs/SimulatedTagRecommendation"
+          },
+          "title": "Recommendedobjecttags",
+          "type": "array"
+        },
+        "recommendedShape": {
+          "enum": [
+            "rectangle",
+            "polygon",
+            "bitmap",
+            "polyline",
+            "point",
+            "graph"
+          ],
+          "title": "Recommendedshape",
+          "type": "string"
+        },
+        "sharpnessScore": {
+          "minimum": 0.0,
+          "title": "Sharpnessscore",
+          "type": "number"
+        },
+        "simId": {
+          "title": "Simid",
+          "type": "string"
+        },
+        "simIndex": {
+          "minimum": 1,
+          "title": "Simindex",
+          "type": "integer"
+        },
+        "viewportEdgeDirection": {
+          "anyOf": [
+            {
+              "enum": [
+                "left",
+                "right",
+                "top",
+                "bottom",
+                "top-left",
+                "top-right",
+                "bottom-left",
+                "bottom-right"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Viewportedgedirection"
+        },
+        "visibilityStatus": {
+          "enum": [
+            "foreground_clear",
+            "occluded",
+            "border_truncated"
+          ],
+          "title": "Visibilitystatus",
+          "type": "string"
+        }
+      },
+      "required": [
+        "simId",
+        "simIndex",
+        "classTitle",
+        "recommendedShape",
+        "bbox",
+        "confidence",
+        "sharpnessScore",
+        "visibilityStatus",
+        "overlapIouMax",
+        "overlapCoverRatio",
+        "outsideViewport"
+      ],
+      "title": "SimulatedObjectCandidate",
+      "type": "object"
+    },
+    "SimulatedTagRecommendation": {
+      "additionalProperties": false,
+      "properties": {
+        "confidence": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        },
+        "tagName": {
+          "title": "Tagname",
+          "type": "string"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value"
+        }
+      },
+      "required": [
+        "tagName",
+        "reason",
+        "confidence"
+      ],
+      "title": "SimulatedTagRecommendation",
+      "type": "object"
+    },
+    "SinglePointContainer": {
+      "additionalProperties": false,
+      "properties": {
+        "exterior": {
+          "maxItems": 1,
+          "minItems": 1,
+          "prefixItems": [
+            {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "type": "array"
+            }
+          ],
+          "title": "Exterior",
+          "type": "array"
+        },
+        "interior": {
+          "items": {
+            "items": {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "type": "array"
+            },
+            "type": "array"
+          },
+          "maxItems": 0,
+          "title": "Interior",
+          "type": "array"
+        }
+      },
+      "required": [
+        "exterior"
+      ],
+      "title": "SinglePointContainer",
+      "type": "object"
+    },
+    "SummaryCounts": {
+      "additionalProperties": false,
+      "properties": {
+        "blocker": {
+          "default": 0,
+          "title": "Blocker",
+          "type": "integer"
+        },
+        "info": {
+          "default": 0,
+          "title": "Info",
+          "type": "integer"
+        },
+        "warning": {
+          "default": 0,
+          "title": "Warning",
+          "type": "integer"
+        }
+      },
+      "title": "SummaryCounts",
+      "type": "object"
+    },
+    "TagDefinition": {
+      "additionalProperties": false,
+      "properties": {
+        "applicableType": {
+          "enum": [
+            "imagesOnly",
+            "objectsOnly",
+            "all"
+          ],
+          "title": "Applicabletype",
+          "type": "string"
+        },
+        "classes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Classes",
+          "type": "array"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "tagId": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Tagid"
+        },
+        "valueType": {
+          "enum": [
+            "none",
+            "any_number",
+            "any_string",
+            "oneof_string"
+          ],
+          "title": "Valuetype",
+          "type": "string"
+        },
+        "values": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Values",
+          "type": "array"
+        }
+      },
+      "required": [
+        "tagId",
+        "name",
+        "valueType",
+        "applicableType"
+      ],
+      "title": "TagDefinition",
+      "type": "object"
+    },
+    "TagRulesConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "flagForegroundOcclusionFalsePositive": {
+          "default": true,
+          "title": "Flagforegroundocclusionfalsepositive",
+          "type": "boolean"
+        },
+        "imageOnlyTags": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Imageonlytags",
+          "type": "array"
+        },
+        "objectOnlyTags": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Objectonlytags",
+          "type": "array"
+        },
+        "occlusionCoverRatioThreshold": {
+          "default": 0.15,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Occlusioncoverratiothreshold",
+          "type": "number"
+        },
+        "occlusionOverlapIouThreshold": {
+          "default": 0.1,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Occlusionoverlapiouthreshold",
+          "type": "number"
+        }
+      },
+      "title": "TagRulesConfig",
+      "type": "object"
+    },
+    "TagValue": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "tagId": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Tagid"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value"
+        }
+      },
+      "required": [
+        "tagId",
+        "name"
+      ],
+      "title": "TagValue",
+      "type": "object"
+    },
+    "UiStateSnapshot": {
+      "additionalProperties": false,
+      "properties": {
+        "activeClassTitle": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Activeclasstitle"
+        },
+        "activeTool": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Activetool"
+        },
+        "confirmButtonEnabled": {
+          "title": "Confirmbuttonenabled",
+          "type": "boolean"
+        },
+        "isConfirmed": {
+          "title": "Isconfirmed",
+          "type": "boolean"
+        },
+        "partialGeometry": {
+          "default": false,
+          "title": "Partialgeometry",
+          "type": "boolean"
+        },
+        "stateSource": {
+          "enum": [
+            "store",
+            "network_interceptor",
+            "dom_fallback"
+          ],
+          "title": "Statesource",
+          "type": "string"
+        },
+        "synchronizeDirty": {
+          "title": "Synchronizedirty",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "synchronizeDirty",
+        "confirmButtonEnabled",
+        "isConfirmed",
+        "stateSource"
+      ],
+      "title": "UiStateSnapshot",
+      "type": "object"
+    },
+    "ViewportMetadata": {
+      "additionalProperties": false,
+      "properties": {
+        "canvasSize": {
+          "$ref": "#/$defs/CanvasSize"
+        },
+        "source": {
+          "enum": [
+            "minimap",
+            "transform",
+            "fallback_full"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "visibleNormRect": {
+          "maxItems": 4,
+          "minItems": 4,
+          "prefixItems": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "title": "Visiblenormrect",
+          "type": "array"
+        },
+        "visiblePixelRect": {
+          "maxItems": 4,
+          "minItems": 4,
+          "prefixItems": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "title": "Visiblepixelrect",
+          "type": "array"
+        },
+        "zoomPercent": {
+          "exclusiveMinimum": 0,
+          "title": "Zoompercent",
+          "type": "number"
+        }
+      },
+      "required": [
+        "zoomPercent",
+        "visibleNormRect",
+        "visiblePixelRect",
+        "canvasSize",
+        "source"
+      ],
+      "title": "ViewportMetadata",
+      "type": "object"
+    },
+    "VisionRulesConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "enableDepthOcclusionOrdering": {
+          "default": true,
+          "title": "Enabledepthocclusionordering",
+          "type": "boolean"
+        },
+        "ignoreBackgroundBokeh": {
+          "default": true,
+          "title": "Ignorebackgroundbokeh",
+          "type": "boolean"
+        },
+        "minLaplacianSharpness": {
+          "default": 35.0,
+          "minimum": 0.0,
+          "title": "Minlaplaciansharpness",
+          "type": "number"
+        },
+        "missedObjectMinConfidence": {
+          "default": 0.45,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Missedobjectminconfidence",
+          "type": "number"
+        }
+      },
+      "title": "VisionRulesConfig",
+      "type": "object"
+    },
+    "WorkflowRulesConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "blockOnUnsavedSync": {
+          "default": true,
+          "title": "Blockonunsavedsync",
+          "type": "boolean"
+        },
+        "warnOnEmptyImageWithoutConfirm": {
+          "default": true,
+          "title": "Warnonemptyimagewithoutconfirm",
+          "type": "boolean"
+        }
+      },
+      "title": "WorkflowRulesConfig",
+      "type": "object"
+    },
+    "WsEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        },
+        "eventType": {
+          "enum": [
+            "job_progress",
+            "job_completed",
+            "job_failed",
+            "ping"
+          ],
+          "title": "Eventtype",
+          "type": "string"
+        },
+        "jobId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Jobid"
+        },
+        "progressPct": {
+          "anyOf": [
+            {
+              "maximum": 100.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Progresspct"
+        },
+        "result": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/QCResponse"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "stage": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Stage"
+        }
+      },
+      "required": [
+        "eventType"
+      ],
+      "title": "WsEvent",
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Supervisely Hybrid QC Assistant Canonical Contract",
+  "version": "1.0.0"
+}

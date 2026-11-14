@@ -1,0 +1,34 @@
+profileId: "quantigo-polygon-seg-v1"
+name: "Quantigo Polygon Segmentation"
+description: "Focused on polygon ring validity, interior holes, needle spikes, and vertex density."
+isBuiltin: true
+matchers:
+  jobTitleRegex: "poly(gon)?[_ ]?seg"
+  projectIds: []
+  datasetIds: []
+workflowRules:
+  blockOnUnsavedSync: true
+  warnOnEmptyImageWithoutConfirm: true
+tagRules:
+  imageOnlyTags: []
+  objectOnlyTags:
+    - "Occlusion"
+    - "Truncated"
+  occlusionOverlapIouThreshold: 0.12
+  occlusionCoverRatioThreshold: 0.18
+  flagForegroundOcclusionFalsePositive: true
+geometryRules:
+  minBoxAreaPx: 64
+  minPolygonVertices: 4
+  minPolylineVertices: 2
+  minMaskAreaPx: 32
+  maxDisconnectedMaskComponents: 8
+  edgeSnapMarginPx: 3
+  minBoxIouTightness: 0.76
+  requireRequiredGraphNodes: true
+visionRules:
+  missedObjectMinConfidence: 0.48
+  minLaplacianSharpness: 35.0
+  ignoreBackgroundBokeh: true
+  enableDepthOcclusionOrdering: true
+classOverrides: {}
