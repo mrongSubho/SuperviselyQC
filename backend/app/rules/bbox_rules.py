@@ -16,6 +16,48 @@ _SLIVER_EXEMPT_CLASSES = {
     "streetlight",
 }
 
+TRUNCATION_TAG_ALIASES = {"truncation", "truncated", "truncate"}
+
+
+def is_truncation_tag_name(name: str) -> bool:
+    """Return True when a tag name denotes image-edge truncation."""
+    return name.strip().lower() in TRUNCATION_TAG_ALIASES
+
+
+def resolve_truncation_tag_name(
+    ctx: RuleContext,
+    class_title: str | None = None,
+    *,
+    fallback_to_profile: bool = True,
+    default_advisory: str | None = None,
+) -> tuple[str | None, bool]:
+    """Resolve the active truncation tag name and whether it came from ontology.tags."""
+    for tag_def in ctx.request.ontology.tags:
+        if not is_truncation_tag_name(tag_def.name):
+            continue
+        if tag_def.applicable_type not in {"objectsOnly", "all"}:
+            return None, True
+        if (
+            class_title
+            and tag_def.classes
+            and all(c.lower() != class_title.lower() for c in tag_def.classes)
+        ):
+            return None, True
+        return tag_def.name, True
+
+    if fallback_to_profile:
+        for prof_tag in ctx.profile.tag_rules.object_only_tags:
+            if is_truncation_tag_name(prof_tag):
+                return prof_tag, False
+
+    return default_advisory, False
+
+
+def is_bbox_touching_frame_edge(bbox: BoundingBoxTuple, w: float, h: float, margin: float) -> bool:
+    """Return True when any side of bbox lies within margin px of the image frame."""
+    x1, y1, x2, y2 = bbox
+    return x1 <= margin or y1 <= margin or x2 >= w - margin or y2 >= h - margin
+
 
 def estimate_bbox_foreground_score(
     bbox_a: BoundingBoxTuple,
@@ -284,10 +326,7 @@ def evaluate_bbox_rules(
             if not _has_occlusion_tag(nf):
                 continue
             ov_list = overlaps_by_id.get(nf.figure.figure_id, [])
-            x1, y1, x2, y2 = nf.bbox
-            touches_border = (
-                x1 <= edge or y1 <= edge or x2 >= w - edge or y2 >= h - edge
-            )
+            touches_border = is_bbox_touching_frame_edge(nf.bbox, w, h, edge)
             label = ctx.figure_display_label(nf.figure)
 
             is_isolated_fp = len(ov_list) == 0 and not touches_border
@@ -329,5 +368,93 @@ def evaluate_bbox_rules(
                         ],
                     )
                 )
+
+    # 4. Frame Truncation Tag Check (uses ontology Truncation/Truncated or profile objectOnlyTags)
+    img_area = float(ctx.width * ctx.height)
+    for nf in two_d_figs:
+        if nf.bbox_area >= ctx.tunables.canvas_wide_area_ratio * img_area:
+            continue
+        existing_trunc_tags = [t.name for t in nf.figure.tags if is_truncation_tag_name(t.name)]
+        label = ctx.figure_display_label(nf.figure)
+
+        if existing_trunc_tags:
+            x1, y1, x2, y2 = nf.bbox
+            min_gap = min(x1, y1, w - x2, h - y2)
+            if min_gap > near_miss_max:
+                tag_name = existing_trunc_tags[0]
+                findings.append(
+                    ctx.make_finding(
+                        rule_id="BBOX_TRUNCATION_FP",
+                        severity="warning",
+                        category="tags",
+                        title=f"False-Positive {tag_name} Tag on Interior Object",
+                        message=f'{label} carries "{tag_name}" tag, yet lies {min_gap:.0f}px inside the image frame.',
+                        figure_ids=[nf.figure.figure_id],
+                        outside_viewport=nf.outside_viewport,
+                        focus_rect=nf.bbox,
+                        confidence=0.90,
+                        fingerprint=f"BBOX_TRUNCATION_FP:{nf.figure.figure_id}",
+                        suggested_fixes=[
+                            QuickFixAction(
+                                action_id=f"fix_rm_trunc_{nf.figure.figure_id}",
+                                label=f"Remove {tag_name} from {label}",
+                                action_type="remove_object_tag",
+                                target_figure_ids=[nf.figure.figure_id],
+                                tag_name=tag_name,
+                            ),
+                            QuickFixAction(
+                                action_id=f"fix_inspect_trunc_fp_{nf.figure.figure_id}",
+                                label=f"Inspect {label}",
+                                action_type="inspect_figure",
+                                target_figure_ids=[nf.figure.figure_id],
+                                focus_rect=nf.bbox,
+                            ),
+                        ],
+                    )
+                )
+            continue
+
+        trunc_tag_name, from_ontology = resolve_truncation_tag_name(
+            ctx,
+            nf.figure.class_title,
+            fallback_to_profile=True,
+        )
+        if trunc_tag_name is None:
+            continue
+        if not from_ontology and _has_occlusion_tag(nf):
+            continue
+        if is_bbox_touching_frame_edge(nf.bbox, w, h, edge):
+            findings.append(
+                ctx.make_finding(
+                    rule_id="BBOX_TRUNCATION_MISSING_TAG",
+                    severity="warning",
+                    category="tags",
+                    title=f"Frame-Truncated Figure Missing {trunc_tag_name} Tag",
+                    message=(
+                        f"{label} is cut off at the image edge — add '{trunc_tag_name}' tag if truncated."
+                    ),
+                    figure_ids=[nf.figure.figure_id],
+                    outside_viewport=nf.outside_viewport,
+                    focus_rect=nf.bbox,
+                    confidence=0.85,
+                    fingerprint=f"BBOX_TRUNCATION_MISSING_TAG:{nf.figure.figure_id}",
+                    suggested_fixes=[
+                        QuickFixAction(
+                            action_id=f"fix_add_trunc_{nf.figure.figure_id}",
+                            label=f"Add {trunc_tag_name} to {label}",
+                            action_type="add_object_tag",
+                            target_figure_ids=[nf.figure.figure_id],
+                            tag_name=trunc_tag_name,
+                        ),
+                        QuickFixAction(
+                            action_id=f"fix_inspect_trunc_{nf.figure.figure_id}",
+                            label=f"Inspect {label}",
+                            action_type="inspect_figure",
+                            target_figure_ids=[nf.figure.figure_id],
+                            focus_rect=nf.bbox,
+                        ),
+                    ],
+                )
+            )
 
     return findings

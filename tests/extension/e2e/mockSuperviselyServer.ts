@@ -134,6 +134,8 @@ function renderMockHtml(): string {
   <header data-qc-role="topbar">
     <span style="font-weight:700; color:#94a3b8;">Quantigo &gt; Vehicles &gt;</span>
     <span data-qc-role="zoom">100%</span>
+    <button id="prev-btn" data-testid="prev-btn" class="btn" type="button">&lt;- Prev</button>
+    <button id="next-btn" data-testid="next-btn" class="btn" type="button">Next -&gt;</button>
     <button
       id="sync-btn"
       data-testid="sync-btn"
@@ -219,59 +221,148 @@ function renderMockHtml(): string {
       oldBtn.replaceWith(nextBtn);
     };
 
+    var IMAGE_FIXTURES = {
+      img_100: {
+        currentImage: {
+          imageId: "img_100",
+          datasetId: "5501",
+          name: "sample_1200x900.png",
+          width: 1200,
+          height: 900,
+          hash: "sha256:mock_img_100",
+          link: "/assets/sample_1200x900.png"
+        },
+        dirty: true,
+        annotations: {
+          imageTags: [
+            { tagId: 10, name: "Occlusion", value: null }
+          ],
+          figures: [
+            {
+              figureId: "fig_valid_car",
+              classId: 1,
+              classTitle: "car",
+              geometryType: "rectangle",
+              points: { exterior: [[100, 120], [320, 290]], interior: [] },
+              tags: [],
+              labelIndex: 1
+            },
+            {
+              figureId: "fig_oob_car",
+              classId: 1,
+              classTitle: "car",
+              geometryType: "rectangle",
+              points: { exterior: [[-18, 40], [180, 160]], interior: [] },
+              tags: [],
+              labelIndex: 2
+            },
+            {
+              figureId: "fig_micro_car",
+              classId: 1,
+              classTitle: "car",
+              geometryType: "rectangle",
+              points: { exterior: [[400, 400], [404, 404]], interior: [] },
+              tags: [],
+              labelIndex: 3
+            }
+          ]
+        }
+      },
+      img_101: {
+        currentImage: {
+          imageId: "img_101",
+          datasetId: "5501",
+          name: "sample_next_1200x900.png",
+          width: 1200,
+          height: 900,
+          hash: "sha256:mock_img_101",
+          link: "/assets/sample_next_1200x900.png"
+        },
+        dirty: false,
+        annotations: {
+          imageTags: [],
+          figures: [
+            {
+              figureId: "fig_clean_car_101",
+              classId: 1,
+              classTitle: "car",
+              geometryType: "rectangle",
+              points: { exterior: [[140, 160], [420, 340]], interior: [] },
+              tags: [],
+              labelIndex: 1
+            }
+          ]
+        }
+      }
+    };
+
+    var initialImgId = new URLSearchParams(window.location.search).get("imageId");
+    if (!initialImgId || !IMAGE_FIXTURES[initialImgId]) initialImgId = "img_100";
+    var initialFixture = IMAGE_FIXTURES[initialImgId];
+
     var mockStoreState = {
       classes: ${JSON.stringify(MOCK_PROJECT_META.classes)},
-      currentImage: {
-        imageId: "img_100",
-        datasetId: "5501",
-        name: "sample_1200x900.png",
-        width: 1200,
-        height: 900,
-        hash: "sha256:mock_img_100",
-        link: "/assets/sample_1200x900.png"
-      },
+      currentImage: JSON.parse(JSON.stringify(initialFixture.currentImage)),
       activeTool: "rectangle",
       activeClassTitle: "car",
       isConfirmed: false,
-      annotations: {
-        imageTags: [
-          { tagId: 10, name: "Occlusion", value: null }
-        ],
-        figures: [
-          {
-            figureId: "fig_valid_car",
-            classId: 1,
-            classTitle: "car",
-            geometryType: "rectangle",
-            points: { exterior: [[100, 120], [320, 290]], interior: [] },
-            tags: [],
-            labelIndex: 1
-          },
-          {
-            figureId: "fig_oob_car",
-            classId: 1,
-            classTitle: "car",
-            geometryType: "rectangle",
-            points: { exterior: [[-18, 40], [180, 160]], interior: [] },
-            tags: [],
-            labelIndex: 2
-          },
-          {
-            figureId: "fig_micro_car",
-            classId: 1,
-            classTitle: "car",
-            geometryType: "rectangle",
-            points: { exterior: [[400, 400], [404, 404]], interior: [] },
-            tags: [],
-            labelIndex: 3
-          }
-        ]
-      }
+      annotations: JSON.parse(JSON.stringify(initialFixture.annotations))
     };
 
     document.getElementById("root").__store = {
       getState: function () { return mockStoreState; }
     };
+
+    function applyMockDomForImage(fixture, imgId) {
+      var syncBtn = document.getElementById("sync-btn");
+      if (syncBtn) {
+        syncBtn.dataset.dirty = fixture.dirty ? "true" : "false";
+        if (fixture.dirty) {
+          syncBtn.classList.add("dirty");
+          syncBtn.style.backgroundColor = "rgb(251, 191, 36)";
+          syncBtn.style.color = "#111827";
+        } else {
+          syncBtn.classList.remove("dirty");
+          syncBtn.style.backgroundColor = "rgb(37, 43, 55)";
+          syncBtn.style.color = "#f8fafc";
+        }
+      }
+      var tagsPanel = document.querySelector('[data-qc-role="image-tags"]');
+      if (tagsPanel) {
+        tagsPanel.innerHTML = fixture.annotations.imageTags.length
+          ? fixture.annotations.imageTags.map(function (t) {
+              return '<span data-tag-name="' + t.name + '" class="tag-chip">' + t.name + '</span>';
+            }).join("")
+          : "";
+      }
+      var count = fixture.annotations.figures.length;
+      var classRow = document.querySelector('[data-qc-role="objects-by-classes"] [data-class-title="car"]');
+      if (classRow) {
+        classRow.dataset.count = String(count);
+        classRow.textContent = "car (" + count + ")";
+      }
+      var canvasEl = document.querySelector("canvas");
+      if (canvasEl) {
+        var c = canvasEl.getContext("2d");
+        c.fillStyle = imgId === "img_101" ? "#1e293b" : "#263042";
+        c.fillRect(0, 0, canvasEl.width, canvasEl.height);
+        c.strokeStyle = imgId === "img_101" ? "#38bdf8" : "#2ce1b4";
+        c.lineWidth = 3;
+        c.strokeRect(80, 90, 180, 120);
+      }
+    }
+
+    function switchMockImage(targetId) {
+      var fixture = IMAGE_FIXTURES[targetId] || IMAGE_FIXTURES.img_100;
+      mockStoreState.currentImage = JSON.parse(JSON.stringify(fixture.currentImage));
+      mockStoreState.annotations = JSON.parse(JSON.stringify(fixture.annotations));
+      mockStoreState.isConfirmed = false;
+      applyMockDomForImage(fixture, targetId);
+      var nextUrl = new URL(window.location.href);
+      nextUrl.searchParams.set("imageId", targetId);
+      history.pushState({ imageId: targetId }, "", nextUrl.pathname + nextUrl.search);
+      fetch("/api/images/" + targetId).catch(function () {});
+    }
 
     window.__fixAllBlockingIssues = function () {
       var syncBtn = document.getElementById("sync-btn");
@@ -300,14 +391,16 @@ function renderMockHtml(): string {
       ];
     };
 
-    // Draw sample canvas frame and fire realistic Supervisely API reads for interceptor capture
-    var canvas = document.querySelector("canvas");
-    var ctx = canvas.getContext("2d");
-    ctx.fillStyle = "#263042";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.strokeStyle = "#2ce1b4";
-    ctx.lineWidth = 3;
-    ctx.strokeRect(80, 90, 180, 120);
+    applyMockDomForImage(initialFixture, initialImgId);
+
+    document.getElementById("prev-btn").addEventListener("click", function () {
+      var cur = mockStoreState.currentImage.imageId;
+      switchMockImage(cur === "img_101" ? "img_100" : "img_101");
+    });
+    document.getElementById("next-btn").addEventListener("click", function () {
+      var cur = mockStoreState.currentImage.imageId;
+      switchMockImage(cur === "img_100" ? "img_101" : "img_100");
+    });
 
     var sidebarClassRows = Array.from(document.querySelectorAll('[data-qc-role="classes"] [data-class-title]'));
     sidebarClassRows.forEach(function (row) {
@@ -325,7 +418,7 @@ function renderMockHtml(): string {
     });
 
     fetch("/api/projects/11402/meta").catch(function () {});
-    fetch("/api/images/img_100").catch(function () {});
+    fetch("/api/images/" + initialImgId).catch(function () {});
   </script>
 </body>
 </html>`;
@@ -352,23 +445,24 @@ export async function startMockSuperviselyServer(): Promise<MockSuperviselyHandl
       return;
     }
 
-    if (urlPath === "/api/images/img_100") {
+    if (urlPath === "/api/images/img_100" || urlPath === "/api/images/img_101") {
+      const id = urlPath.endsWith("img_101") ? "img_101" : "img_100";
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(
         JSON.stringify({
-          imageId: "img_100",
+          imageId: id,
           datasetId: "5501",
-          name: "sample_1200x900.png",
+          name: id === "img_101" ? "sample_next_1200x900.png" : "sample_1200x900.png",
           width: 1200,
           height: 900,
-          hash: "sha256:mock_img_100",
-          link: "/assets/sample_1200x900.png",
+          hash: `sha256:mock_${id}`,
+          link: id === "img_101" ? "/assets/sample_next_1200x900.png" : "/assets/sample_1200x900.png",
         }),
       );
       return;
     }
 
-    if (urlPath === "/assets/sample_1200x900.png") {
+    if (urlPath === "/assets/sample_1200x900.png" || urlPath === "/assets/sample_next_1200x900.png") {
       res.writeHead(200, {
         "Content-Type": "image/png",
         "Content-Length": String(SAMPLE_PNG_1200X900.byteLength),

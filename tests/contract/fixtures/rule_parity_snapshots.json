@@ -1,0 +1,372 @@
+{
+  "profile": {
+    "profileId": "parity-default",
+    "name": "Parity Default",
+    "description": "Shared fixture profile for Python vs TS rule logic parity",
+    "isBuiltin": true,
+    "matchers": {
+      "jobTitleRegex": ".*",
+      "projectIds": [],
+      "datasetIds": []
+    },
+    "workflowRules": {
+      "blockOnUnsavedSync": true,
+      "warnOnEmptyImageWithoutConfirm": true
+    },
+    "tagRules": {
+      "imageOnlyTags": [],
+      "objectOnlyTags": ["Occlusion"],
+      "occlusionOverlapIouThreshold": 0.1,
+      "occlusionCoverRatioThreshold": 0.15,
+      "flagForegroundOcclusionFalsePositive": true
+    },
+    "geometryRules": {
+      "minBoxAreaPx": 64,
+      "minPolygonVertices": 3,
+      "minPolylineVertices": 2,
+      "minMaskAreaPx": 32,
+      "maxDisconnectedMaskComponents": 8,
+      "edgeSnapMarginPx": 3,
+      "minBoxIouTightness": 0.72,
+      "requireRequiredGraphNodes": true
+    },
+    "visionRules": {
+      "missedObjectMinConfidence": 0.45,
+      "minLaplacianSharpness": 35.0,
+      "ignoreBackgroundBokeh": true,
+      "enableDepthOcclusionOrdering": true
+    },
+    "classOverrides": {}
+  },
+  "cases": [
+    {
+      "name": "empty_unsaved_sync",
+      "request": {
+        "requestId": "req_parity_1",
+        "snapshotSeq": 1,
+        "mode": "rules",
+        "asyncIfHeavy": false,
+        "image": {
+          "imageId": "img_p1",
+          "datasetId": "ds_1",
+          "fileName": "p1.jpg",
+          "width": 1000,
+          "height": 800,
+          "imageHash": "sha256:p1"
+        },
+        "ontology": {
+          "projectId": "proj_1",
+          "classes": [
+            { "classId": 1, "title": "Car", "shape": "rectangle", "color": "#00ff00" }
+          ],
+          "tags": [],
+          "jobClassesToLabel": ["Car"]
+        },
+        "imageTags": [],
+        "figures": [],
+        "domFigureSummaries": [],
+        "viewport": {
+          "zoomPercent": 100,
+          "visibleNormRect": [0, 0, 1, 1],
+          "visiblePixelRect": [0, 0, 1000, 800],
+          "canvasSize": { "width": 1000, "height": 800 },
+          "source": "fallback_full"
+        },
+        "uiState": {
+          "synchronizeDirty": true,
+          "confirmButtonEnabled": true,
+          "isConfirmed": false,
+          "activeTool": "rectangle",
+          "activeClassTitle": "Car",
+          "stateSource": "store",
+          "partialGeometry": false
+        }
+      },
+      "expected": [
+        { "ruleId": "WORKFLOW_UNSAVED_SYNC", "severity": "blocker" },
+        { "ruleId": "WORKFLOW_EMPTY_UNCONFIRMED", "severity": "warning" }
+      ]
+    },
+    {
+      "name": "micro_click_and_duplicate_bbox",
+      "request": {
+        "requestId": "req_parity_2",
+        "snapshotSeq": 2,
+        "mode": "rules",
+        "asyncIfHeavy": false,
+        "image": {
+          "imageId": "img_p2",
+          "datasetId": "ds_1",
+          "fileName": "p2.jpg",
+          "width": 1000,
+          "height": 800,
+          "imageHash": "sha256:p2"
+        },
+        "ontology": {
+          "projectId": "proj_1",
+          "classes": [
+            { "classId": 1, "title": "Car", "shape": "rectangle", "color": "#00ff00" }
+          ],
+          "tags": [],
+          "jobClassesToLabel": ["Car"]
+        },
+        "imageTags": [],
+        "figures": [
+          {
+            "figureId": "fig_micro",
+            "classId": 1,
+            "classTitle": "Car",
+            "geometryType": "rectangle",
+            "tags": [],
+            "points": { "exterior": [[50, 50], [54, 54]], "interior": [] }
+          },
+          {
+            "figureId": "fig_dup_a",
+            "classId": 1,
+            "classTitle": "Car",
+            "geometryType": "rectangle",
+            "tags": [],
+            "points": { "exterior": [[200, 200], [400, 350]], "interior": [] }
+          },
+          {
+            "figureId": "fig_dup_b",
+            "classId": 1,
+            "classTitle": "Car",
+            "geometryType": "rectangle",
+            "tags": [],
+            "points": { "exterior": [[201, 201], [400, 350]], "interior": [] }
+          }
+        ],
+        "domFigureSummaries": [],
+        "viewport": {
+          "zoomPercent": 100,
+          "visibleNormRect": [0, 0, 1, 1],
+          "visiblePixelRect": [0, 0, 1000, 800],
+          "canvasSize": { "width": 1000, "height": 800 },
+          "source": "fallback_full"
+        },
+        "uiState": {
+          "synchronizeDirty": false,
+          "confirmButtonEnabled": true,
+          "isConfirmed": false,
+          "activeTool": "rectangle",
+          "activeClassTitle": "Car",
+          "stateSource": "store",
+          "partialGeometry": false
+        }
+      },
+      "expected": [
+        { "ruleId": "GEOM_EXTREME_MICRO_CLICK", "severity": "blocker" },
+        { "ruleId": "GEOM_DUPLICATE_FIGURE", "severity": "blocker" }
+      ]
+    },
+    {
+      "name": "polygon_self_intersection",
+      "request": {
+        "requestId": "req_parity_3",
+        "snapshotSeq": 3,
+        "mode": "rules",
+        "asyncIfHeavy": false,
+        "image": {
+          "imageId": "img_p3",
+          "datasetId": "ds_1",
+          "fileName": "p3.jpg",
+          "width": 1000,
+          "height": 800,
+          "imageHash": "sha256:p3"
+        },
+        "ontology": {
+          "projectId": "proj_1",
+          "classes": [
+            { "classId": 2, "title": "Building", "shape": "polygon", "color": "#0000ff" }
+          ],
+          "tags": [],
+          "jobClassesToLabel": ["Building"]
+        },
+        "imageTags": [],
+        "figures": [
+          {
+            "figureId": "fig_bowtie",
+            "classId": 2,
+            "classTitle": "Building",
+            "geometryType": "polygon",
+            "tags": [],
+            "points": {
+              "exterior": [[100, 100], [300, 300], [300, 100], [100, 220]],
+              "interior": []
+            }
+          }
+        ],
+        "domFigureSummaries": [],
+        "viewport": {
+          "zoomPercent": 100,
+          "visibleNormRect": [0, 0, 1, 1],
+          "visiblePixelRect": [0, 0, 1000, 800],
+          "canvasSize": { "width": 1000, "height": 800 },
+          "source": "fallback_full"
+        },
+        "uiState": {
+          "synchronizeDirty": false,
+          "confirmButtonEnabled": true,
+          "isConfirmed": false,
+          "activeTool": "polygon",
+          "activeClassTitle": "Building",
+          "stateSource": "store",
+          "partialGeometry": false
+        }
+      },
+      "expected": [
+        { "ruleId": "POLY_SELF_INTERSECTION", "severity": "blocker" }
+      ]
+    },
+    {
+      "name": "clean_valid_scene",
+      "request": {
+        "requestId": "req_parity_4",
+        "snapshotSeq": 4,
+        "mode": "rules",
+        "asyncIfHeavy": false,
+        "image": {
+          "imageId": "img_p4",
+          "datasetId": "ds_1",
+          "fileName": "p4.jpg",
+          "width": 1000,
+          "height": 800,
+          "imageHash": "sha256:p4"
+        },
+        "ontology": {
+          "projectId": "proj_1",
+          "classes": [
+            { "classId": 1, "title": "Car", "shape": "rectangle", "color": "#00ff00" },
+            { "classId": 2, "title": "Building", "shape": "polygon", "color": "#0000ff" }
+          ],
+          "tags": [],
+          "jobClassesToLabel": ["Car", "Building"]
+        },
+        "imageTags": [],
+        "figures": [
+          {
+            "figureId": "fig_car_ok",
+            "classId": 1,
+            "classTitle": "Car",
+            "geometryType": "rectangle",
+            "tags": [],
+            "points": { "exterior": [[120, 220], [340, 360]], "interior": [] }
+          },
+          {
+            "figureId": "fig_bldg_ok",
+            "classId": 2,
+            "classTitle": "Building",
+            "geometryType": "polygon",
+            "tags": [],
+            "points": {
+              "exterior": [[500, 100], [800, 100], [800, 400], [500, 400]],
+              "interior": []
+            }
+          }
+        ],
+        "domFigureSummaries": [],
+        "viewport": {
+          "zoomPercent": 100,
+          "visibleNormRect": [0, 0, 1, 1],
+          "visiblePixelRect": [0, 0, 1000, 800],
+          "canvasSize": { "width": 1000, "height": 800 },
+          "source": "fallback_full"
+        },
+        "uiState": {
+          "synchronizeDirty": false,
+          "confirmButtonEnabled": true,
+          "isConfirmed": false,
+          "activeTool": "rectangle",
+          "activeClassTitle": "Car",
+          "stateSource": "store",
+          "partialGeometry": false
+        }
+      },
+      "expected": []
+    },
+    {
+      "name": "truncation_missing_fp_and_border_gap",
+      "request": {
+        "requestId": "req_parity_5",
+        "snapshotSeq": 5,
+        "mode": "rules",
+        "asyncIfHeavy": false,
+        "image": {
+          "imageId": "img_p5",
+          "datasetId": "ds_1",
+          "fileName": "p5.jpg",
+          "width": 1000,
+          "height": 800,
+          "imageHash": "sha256:p5"
+        },
+        "ontology": {
+          "projectId": "proj_1",
+          "classes": [
+            { "classId": 1, "title": "Car", "shape": "rectangle", "color": "#00ff00" }
+          ],
+          "tags": [
+            {
+              "tagId": 502,
+              "name": "Truncation",
+              "valueType": "none",
+              "applicableType": "objectsOnly",
+              "classes": [],
+              "values": []
+            }
+          ],
+          "jobClassesToLabel": ["Car"]
+        },
+        "imageTags": [],
+        "figures": [
+          {
+            "figureId": "fig_edge_missing",
+            "classId": 1,
+            "classTitle": "Car",
+            "geometryType": "rectangle",
+            "tags": [],
+            "points": { "exterior": [[0, 120], [180, 420]], "interior": [] }
+          },
+          {
+            "figureId": "fig_interior_fp",
+            "classId": 1,
+            "classTitle": "Car",
+            "geometryType": "rectangle",
+            "tags": [{ "tagId": 502, "name": "Truncation", "value": null }],
+            "points": { "exterior": [[300, 200], [500, 400]], "interior": [] }
+          },
+          {
+            "figureId": "fig_near_miss",
+            "classId": 1,
+            "classTitle": "Car",
+            "geometryType": "rectangle",
+            "tags": [],
+            "points": { "exterior": [[800, 200], [993, 600]], "interior": [] }
+          }
+        ],
+        "domFigureSummaries": [],
+        "viewport": {
+          "zoomPercent": 100,
+          "visibleNormRect": [0, 0, 1, 1],
+          "visiblePixelRect": [0, 0, 1000, 800],
+          "canvasSize": { "width": 1000, "height": 800 },
+          "source": "fallback_full"
+        },
+        "uiState": {
+          "synchronizeDirty": false,
+          "confirmButtonEnabled": true,
+          "isConfirmed": false,
+          "activeTool": "rectangle",
+          "activeClassTitle": "Car",
+          "stateSource": "store",
+          "partialGeometry": false
+        }
+      },
+      "expected": [
+        { "ruleId": "BBOX_BORDER_TRUNCATION", "severity": "warning" },
+        { "ruleId": "BBOX_TRUNCATION_FP", "severity": "warning" },
+        { "ruleId": "BBOX_TRUNCATION_MISSING_TAG", "severity": "warning" }
+      ]
+    }
+  ]
+}

@@ -1,6 +1,4 @@
-import { createElement } from "react";
 import type {
-  AnnotationFigure,
   BoundingBoxTuple,
   ContentToPageMessage,
   DrawerDockMode,
@@ -14,12 +12,10 @@ import type {
   QCFinding,
   QCMode,
   QCResponse,
-  QuickFixAction,
   RuleProfileSummary,
   SceneSimulationPlan,
   SimulatedObjectCandidate,
   SwJobPushMessage,
-  SwRequestMessage,
   SwUploadPortMessage,
 } from "../shared/types";
 import {
@@ -35,7 +31,7 @@ import {
 } from "../shared/storage";
 import {
   captureCanvasOrImgFallback,
-  executeQuickFix,
+  extractDomObjectTags,
   extractDomOntologyClasses,
   extractDomResolutionHint,
   extractDomState,
@@ -45,195 +41,28 @@ import {
 } from "./domObserver";
 import { ensureImageCachedForVision } from "./imageFetcher";
 import { runOfflineDeterministicQc } from "./offlineQcEngine";
+import { renderCoordinatorUi } from "./rendering";
 import {
-  CanvasOverlay,
+  isEditableKeyboardEvent,
+  openSwUploadPort,
+  reconcileSimulationWithFigures,
+  sendSwMessage,
+  warmBitmapBoundingBoxes,
+} from "./simulationMatch";
+import {
   computeCanvasAffineTransform,
   projectBboxToCssRect,
 } from "./ui/CanvasOverlay";
 import {
-  ConfirmGuardModal,
   evaluateConfirmGuard,
   isConfirmTargetElement,
   type ConfirmGuardDecision,
 } from "./ui/ConfirmGuard";
-import { QcDrawer } from "./ui/QcDrawer";
 import { mountShadowRoot, type ShadowMountHandle } from "./ui/shadowHost";
-import { TopBarWidget } from "./ui/TopBarWidget";
 
-const EDITABLE_SELECTOR = 'input, textarea, select, [contenteditable="true"]';
+export { reconcileSimulationWithFigures };
 
-function isEditableKeyboardEvent(evt: KeyboardEvent): boolean {
-  const path = typeof evt.composedPath === "function" ? evt.composedPath() : [evt.target];
-  for (const node of path) {
-    if (node instanceof HTMLElement && node.matches(EDITABLE_SELECTOR)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function sendSwMessage<T = unknown>(msg: SwRequestMessage): Promise<T> {
-  return chrome.runtime.sendMessage(msg) as Promise<T>;
-}
-
-function openSwUploadPort() {
-  const port = chrome.runtime.connect({ name: "sly-qc-upload" });
-  return {
-    postMessage: (msg: SwUploadPortMessage) => port.postMessage(msg),
-    onAck: () =>
-      new Promise<{ ok: boolean; error?: string }>((resolve) => {
-        const handler = (ack: unknown) => {
-          port.onMessage.removeListener(handler);
-          resolve((ack as { ok: boolean; error?: string }) ?? { ok: false });
-        };
-        port.onMessage.addListener(handler);
-      }),
-    disconnect: () => port.disconnect(),
-  };
-}
-
-const ANIMAL_SUBCLASSES = new Set(["horse", "dog", "cat", "bird", "cow", "sheep"]);
-
-function extractFigureBoundingBox(fig: AnnotationFigure): BoundingBoxTuple | null {
-  if (fig.geometryType === "rectangle" && fig.points.exterior.length >= 2) {
-    const [p0, p1] = fig.points.exterior;
-    return [
-      Math.min(p0[0], p1[0]),
-      Math.min(p0[1], p1[1]),
-      Math.max(p0[0], p1[0]),
-      Math.max(p0[1], p1[1]),
-    ];
-  }
-  if (
-    (fig.geometryType === "polygon" || fig.geometryType === "polyline") &&
-    fig.points.exterior.length >= 2
-  ) {
-    let minX = Infinity;
-    let minY = Infinity;
-    let maxX = -Infinity;
-    let maxY = -Infinity;
-    for (const [x, y] of fig.points.exterior) {
-      if (x < minX) minX = x;
-      if (y < minY) minY = y;
-      if (x > maxX) maxX = x;
-      if (y > maxY) maxY = y;
-    }
-    if (Number.isFinite(minX) && Number.isFinite(maxX)) {
-      return [minX, minY, maxX, maxY];
-    }
-  }
-  return null;
-}
-
-function computeBoxIou(a: BoundingBoxTuple, b: BoundingBoxTuple): number {
-  const ix0 = Math.max(Math.min(a[0], a[2]), Math.min(b[0], b[2]));
-  const iy0 = Math.max(Math.min(a[1], a[3]), Math.min(b[1], b[3]));
-  const ix1 = Math.min(Math.max(a[0], a[2]), Math.max(b[0], b[2]));
-  const iy1 = Math.min(Math.max(a[1], a[3]), Math.max(b[1], b[3]));
-  const iw = Math.max(0, ix1 - ix0);
-  const ih = Math.max(0, iy1 - iy0);
-  const inter = iw * ih;
-  if (inter <= 0) return 0;
-  const areaA = Math.max(0, Math.abs(a[2] - a[0])) * Math.max(0, Math.abs(a[3] - a[1]));
-  const areaB = Math.max(0, Math.abs(b[2] - b[0])) * Math.max(0, Math.abs(b[3] - b[1]));
-  const union = areaA + areaB - inter;
-  return union > 0 ? inter / union : 0;
-}
-
-function areClassesCompatibleForMatch(figClass: string, candClass: string): {
-  compatible: boolean;
-  figUnknown: boolean;
-} {
-  const f = figClass.trim().toLowerCase();
-  const c = candClass.trim().toLowerCase();
-  if (!f || f === "unknown") {
-    return { compatible: false, figUnknown: true };
-  }
-  if (f === c) {
-    return { compatible: true, figUnknown: false };
-  }
-  if (
-    (f === "animal" && ANIMAL_SUBCLASSES.has(c)) ||
-    (c === "animal" && ANIMAL_SUBCLASSES.has(f))
-  ) {
-    return { compatible: true, figUnknown: false };
-  }
-  return { compatible: false, figUnknown: false };
-}
-
-export function reconcileSimulationWithFigures(
-  plan: SceneSimulationPlan,
-  figures: AnnotationFigure[],
-): SceneSimulationPlan {
-  if (plan.candidates.length === 0) return plan;
-
-  const figBoxes = figures
-    .map((fig) => ({ fig, bbox: extractFigureBoundingBox(fig) }))
-    .filter((entry): entry is { fig: AnnotationFigure; bbox: BoundingBoxTuple } =>
-      Boolean(entry.bbox),
-    );
-
-  // Greedy highest-IoU 1-to-1 matching mirroring backend _match_existing_figures
-  const pairs: Array<{ candIdx: number; figIdx: number; iou: number }> = [];
-  for (let ci = 0; ci < plan.candidates.length; ci += 1) {
-    const cand = plan.candidates[ci]!;
-    for (let fi = 0; fi < figBoxes.length; fi += 1) {
-      const fb = figBoxes[fi]!;
-      const iou = computeBoxIou(cand.bbox, fb.bbox);
-      const { compatible, figUnknown } = areClassesCompatibleForMatch(
-        fb.fig.classTitle,
-        cand.classTitle,
-      );
-      if (compatible && iou >= 0.5) {
-        pairs.push({ candIdx: ci, figIdx: fi, iou });
-      } else if (figUnknown && iou >= 0.65) {
-        pairs.push({ candIdx: ci, figIdx: fi, iou });
-      }
-    }
-  }
-  pairs.sort((a, b) => b.iou - a.iou);
-
-  const matchedByCand = new Map<number, string>();
-  const usedFigs = new Set<number>();
-  for (const p of pairs) {
-    if (matchedByCand.has(p.candIdx) || usedFigs.has(p.figIdx)) continue;
-    matchedByCand.set(p.candIdx, figBoxes[p.figIdx]!.fig.figureId);
-    usedFigs.add(p.figIdx);
-  }
-
-  const nextCandidates = plan.candidates.map((cand, idx) => ({
-    ...cand,
-    matchedFigureId: matchedByCand.get(idx) ?? null,
-  }));
-
-  const completedByClass = new Map<string, number>();
-  let completedTotal = 0;
-  for (const cand of nextCandidates) {
-    if (cand.matchedFigureId) {
-      completedTotal += 1;
-      const key = cand.classTitle.trim().toLowerCase();
-      completedByClass.set(key, (completedByClass.get(key) ?? 0) + 1);
-    }
-  }
-
-  const nextSummaries = plan.classSummaries.map((summary) => {
-    const completed = completedByClass.get(summary.classTitle.trim().toLowerCase()) ?? 0;
-    return {
-      ...summary,
-      completedCount: completed,
-      remainingCount: Math.max(0, summary.totalCount - completed),
-    };
-  });
-
-  return {
-    ...plan,
-    completedTargetObjects: completedTotal,
-    classSummaries: nextSummaries,
-    candidates: nextCandidates,
-  };
-}
-
-class ContentQcCoordinator {
+export class ContentQcCoordinator {
   private settings: ExtensionSettings = { ...DEFAULT_EXTENSION_SETTINGS };
   private mode: QCMode = "standard";
   private pageNonce: string | null = null;
@@ -241,6 +70,9 @@ class ContentQcCoordinator {
   private snapshotWaiters: Array<(snap: PageBridgeSnapshot | null) => void> = [];
 
   private running = false;
+  private runSeq = 0;
+  private activeRunImageId: string | null = null;
+  private autoRunTimer: ReturnType<typeof setTimeout> | null = null;
   private offline = false;
   private device: "mps" | "cpu" | "none" = "none";
   private response: QCResponse | null = null;
@@ -285,10 +117,9 @@ class ContentQcCoordinator {
   async init(): Promise<void> {
     this.settings = await loadSettings();
     this.mode = this.settings.defaultMode;
+    this.assistantClosed = Boolean(this.settings.assistantClosed);
     subscribeSettingsChanges((next) => {
-      this.settings = next;
-      this.mode = next.defaultMode;
-      this.renderAll();
+      this.applySettingsUpdate(next);
     });
 
     this.mountShadowHosts();
@@ -304,6 +135,37 @@ class ContentQcCoordinator {
     window.postMessage(hello, window.location.origin);
 
     this.renderAll();
+  }
+
+  private applySettingsUpdate(next: ExtensionSettings): void {
+    this.settings = next;
+    this.mode = next.defaultMode;
+    const nextClosed = Boolean(next.assistantClosed);
+    if (nextClosed !== this.assistantClosed) {
+      this.assistantClosed = nextClosed;
+      if (nextClosed) {
+        this.drawerOpen = false;
+        this.guardOpen = false;
+        this.cancelPendingAndInflightRuns();
+        this.locatedCandidateId = null;
+        this.highlightedRect = null;
+        this.highlightedLabel = null;
+      }
+    }
+    this.renderAll();
+  }
+
+  private cancelPendingAndInflightRuns(): void {
+    this.runSeq += 1;
+    this.activeJobId = null;
+    this.activeRunImageId = null;
+    if (this.autoRunTimer) {
+      clearTimeout(this.autoRunTimer);
+      this.autoRunTimer = null;
+    }
+    if (this.running) {
+      this.running = false;
+    }
   }
 
   private mountShadowHosts(): void {
@@ -349,43 +211,68 @@ class ContentQcCoordinator {
       }
     });
 
-    // 2. Service Worker async push updates (deep jobs + popup trigger)
-    chrome.runtime.onMessage.addListener((msg: SwJobPushMessage | { type: string }) => {
-      if (msg.type === "QC_TRIGGER_RUN_FROM_POPUP") {
-        this.assistantClosed = false;
-        void this.runQc();
-        return;
-      }
-      if (msg.type === "QC_TOGGLE_PANEL_FROM_POPUP") {
-        this.assistantClosed = !this.assistantClosed;
-        if (!this.assistantClosed) {
-          this.drawerOpen = true;
-        }
-        this.renderAll();
-        return;
-      }
-      if (msg.type === "QC_JOB_EVENT") {
-        const evt = (msg as SwJobPushMessage).event;
-        if (!evt.jobId || evt.jobId !== this.activeJobId) return;
-        if (evt.eventType === "job_completed" && evt.result) {
-          this.activeJobId = null;
-          this.running = false;
-          this.applyQcResponse(evt.result, false);
-        } else if (evt.eventType === "job_failed") {
-          this.activeJobId = null;
-          this.running = false;
-          this.showToast(evt.error ?? "Deep QC job failed.");
+    // 2. Service Worker async push updates (deep jobs + extension action / options triggers)
+    chrome.runtime.onMessage.addListener(
+      (msg: SwJobPushMessage | { type: string }, _sender, sendResponse) => {
+        if (msg.type === "QC_SHOW_TOPBAR_FROM_ACTION") {
+          if (this.assistantClosed) {
+            this.drawerOpen = false;
+          }
+          this.assistantClosed = false;
+          this.settings = { ...this.settings, assistantClosed: false };
+          void saveSettings({ assistantClosed: false });
           this.renderAll();
+          sendResponse({ ok: true });
+          return;
         }
-      }
-    });
+        if (msg.type === "QC_TRIGGER_RUN_FROM_ACTION") {
+          this.assistantClosed = false;
+          this.settings = { ...this.settings, assistantClosed: false };
+          void saveSettings({ assistantClosed: false });
+          void this.runQc();
+          sendResponse({ ok: true });
+          return;
+        }
+        if (msg.type === "QC_TOGGLE_PANEL_FROM_ACTION") {
+          this.assistantClosed = !this.assistantClosed;
+          if (this.assistantClosed) {
+            this.drawerOpen = false;
+            this.guardOpen = false;
+            this.cancelPendingAndInflightRuns();
+            this.locatedCandidateId = null;
+            this.highlightedRect = null;
+            this.highlightedLabel = null;
+          }
+          this.settings = { ...this.settings, assistantClosed: this.assistantClosed };
+          void saveSettings({ assistantClosed: this.assistantClosed });
+          this.renderAll();
+          sendResponse({ ok: true });
+          return;
+        }
+        if (msg.type === "QC_JOB_EVENT") {
+          const evt = (msg as SwJobPushMessage).event;
+          if (!evt.jobId || evt.jobId !== this.activeJobId) return;
+          if (evt.eventType === "job_completed" && evt.result) {
+            this.activeJobId = null;
+            this.activeRunImageId = null;
+            this.running = false;
+            this.applyQcResponse(evt.result, false);
+          } else if (evt.eventType === "job_failed") {
+            this.activeJobId = null;
+            this.activeRunImageId = null;
+            this.running = false;
+            this.showToast(evt.error ?? "Deep QC job failed.");
+            this.renderAll();
+          }
+        }
+      },
+    );
 
     if (typeof chrome !== "undefined" && chrome.storage?.onChanged) {
       chrome.storage.onChanged.addListener((_changes, areaName) => {
         if (areaName !== "local" && areaName !== "sync") return;
         void loadSettings().then((updated) => {
-          this.settings = updated;
-          this.renderAll();
+          this.applySettingsUpdate(updated);
         });
       });
     }
@@ -394,6 +281,7 @@ class ContentQcCoordinator {
     window.addEventListener(
       "click",
       (evt: MouseEvent) => {
+        if (this.assistantClosed) return;
         if (this.bypassNextConfirmClick) {
           this.bypassNextConfirmClick = false;
           return;
@@ -429,6 +317,7 @@ class ContentQcCoordinator {
     window.addEventListener(
       "keydown",
       (evt: KeyboardEvent) => {
+        if (this.assistantClosed) return;
         if (evt.key === "Escape") {
           if (this.guardOpen) {
             this.guardOpen = false;
@@ -483,7 +372,9 @@ class ContentQcCoordinator {
     }
 
     const newImgId = snap.image?.imageId ?? null;
-    const imgChanged = Boolean(newImgId && newImgId !== this.lastImageId);
+    const prevImgId = this.lastImageId;
+    const imgChanged = Boolean(newImgId && newImgId !== prevImgId);
+    const switchedFromPreviousImage = Boolean(prevImgId && newImgId && newImgId !== prevImgId);
     if (imgChanged && newImgId) {
       this.lastImageId = newImgId;
       this.response = null;
@@ -495,10 +386,27 @@ class ContentQcCoordinator {
       this.focusedFindingId = null;
       this.highlightedRect = null;
       this.highlightedLabel = null;
+      this.cancelPendingAndInflightRuns();
       const savedDismissals = await loadDismissedFingerprints(newImgId);
+      if (this.lastImageId !== newImgId) return;
       this.dismissedFingerprints = new Set(savedDismissals);
-      if (this.settings.autoRunOnImageSwitch) {
-        void this.runQc();
+      if (
+        switchedFromPreviousImage &&
+        !this.assistantClosed &&
+        this.settings.autoRunOnImageSwitch
+      ) {
+        const targetImgId = newImgId;
+        this.autoRunTimer = setTimeout(() => {
+          this.autoRunTimer = null;
+          if (
+            this.assistantClosed ||
+            !this.settings.autoRunOnImageSwitch ||
+            this.lastImageId !== targetImgId
+          ) {
+            return;
+          }
+          void this.runQc();
+        }, 180);
       }
     } else if (this.response && snap.snapshotSeq > this.lastEvaluatedSeq) {
       this.staleSnapshot = true;
@@ -511,6 +419,17 @@ class ContentQcCoordinator {
     if (this.response?.sceneSimulation) {
       const domTotalCount = dom.domFigureSummaries.reduce((sum, s) => sum + s.figureCount, 0);
       if (snap.figures.length > 0 || domTotalCount === 0) {
+        if (snap.figures.some((f) => f.geometryType === "bitmap")) {
+          void warmBitmapBoundingBoxes(snap.figures, fallbackW, fallbackH).then((warmed) => {
+            if (warmed && this.response?.sceneSimulation && this.latestSnapshot) {
+              this.liveSceneSimulation = reconcileSimulationWithFigures(
+                this.response.sceneSimulation,
+                this.latestSnapshot.figures,
+              );
+              this.renderAll();
+            }
+          });
+        }
         this.liveSceneSimulation = reconcileSimulationWithFigures(
           this.response.sceneSimulation,
           snap.figures,
@@ -630,7 +549,7 @@ class ContentQcCoordinator {
             value: null,
           }));
 
-    const ontology: ProjectOntology =
+    const baseOntology: ProjectOntology =
       snap?.ontology && snap.ontology.classes.length > 0
         ? snap.ontology
         : {
@@ -650,6 +569,27 @@ class ContentQcCoordinator {
                   })),
             jobClassesToLabel: snap?.ontology?.jobClassesToLabel,
           };
+
+    const domObjectTags = extractDomObjectTags();
+    const existingTagKeys = new Set(baseOntology.tags.map((t) => t.name.trim().toLowerCase()));
+    const mergedTags = [...baseOntology.tags];
+    for (const dt of domObjectTags) {
+      if (!existingTagKeys.has(dt.name.toLowerCase())) {
+        existingTagKeys.add(dt.name.toLowerCase());
+        mergedTags.push({
+          tagId: `dom_tag_${mergedTags.length + 1}`,
+          name: dt.name,
+          valueType: "none",
+          applicableType: "objectsOnly",
+          classes: [],
+          values: [],
+        });
+      }
+    }
+    const ontology: ProjectOntology = {
+      ...baseOntology,
+      tags: mergedTags,
+    };
 
     return {
       requestId: `req_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
@@ -684,17 +624,38 @@ class ContentQcCoordinator {
   }
 
   async runQc(): Promise<void> {
-    if (this.running) return;
+    const initialTargetId = this.lastImageId ?? this.latestSnapshot?.image?.imageId ?? null;
+    if (this.running && this.activeRunImageId === initialTargetId) return;
+    if (this.autoRunTimer) {
+      clearTimeout(this.autoRunTimer);
+      this.autoRunTimer = null;
+    }
+    const myRunSeq = ++this.runSeq;
+    this.activeJobId = null;
+    this.activeRunImageId = initialTargetId;
     this.running = true;
     this.staleSnapshot = false;
     this.renderAll();
 
+    const isStaleRun = (expectedImageId?: string): boolean => {
+      if (myRunSeq !== this.runSeq) return true;
+      if (expectedImageId && this.lastImageId && expectedImageId !== this.lastImageId) {
+        return true;
+      }
+      return false;
+    };
+
     try {
       const snap = await this.requestFreshSnapshot(300);
+      if (isStaleRun(snap?.image?.imageId ?? undefined)) return;
       const req = this.buildAnalyzeRequest(snap);
+      if (isStaleRun(req.image.imageId)) return;
       this.lastRequestSnapshot = req;
       this.lastImageId = req.image.imageId;
-      this.dismissedFingerprints = new Set(await loadDismissedFingerprints(req.image.imageId));
+      this.activeRunImageId = req.image.imageId;
+      const dismissed = await loadDismissedFingerprints(req.image.imageId);
+      if (isStaleRun(req.image.imageId)) return;
+      this.dismissedFingerprints = new Set(dismissed);
 
       // Cache image if vision mode requested (even if snap.originalImageUrl was null, try HEAD/DOM/canvas)
       if (this.mode !== "rules") {
@@ -708,14 +669,19 @@ class ContentQcCoordinator {
           openUploadPort: openSwUploadPort,
           fallbackCaptureFn: () => captureCanvasOrImgFallback(domNow.canvasElement),
         });
+        if (isStaleRun(req.image.imageId)) return;
         if (cacheRes.imageHash) {
           req.image.imageHash = cacheRes.imageHash;
         }
         const hasReliableDims =
           (Boolean(snap?.image) && !(req.image.width === 1920 && req.image.height === 1080)) ||
           Boolean(extractDomResolutionHint(req.image.fileName));
+        const cacheArea = (cacheRes.width ?? 0) * (cacheRes.height ?? 0);
+        const currentArea = req.image.width * req.image.height;
+        const canAdoptCacheDims =
+          !hasReliableDims || (!cacheRes.fromCanvasCapture && cacheArea > currentArea);
         if (
-          (!cacheRes.fromCanvasCapture || !hasReliableDims) &&
+          canAdoptCacheDims &&
           cacheRes.width &&
           cacheRes.width > 0 &&
           cacheRes.height &&
@@ -734,6 +700,7 @@ class ContentQcCoordinator {
               : "Could not cache image for Vision QC — check Options or use Rules mode.",
           );
           this.running = false;
+          this.activeRunImageId = null;
           this.renderAll();
           return;
         }
@@ -750,6 +717,7 @@ class ContentQcCoordinator {
         error?: string;
         data?: QCResponse;
       };
+      if (isStaleRun(req.image.imageId)) return;
 
       if (swRes?.ok && swRes.data) {
         if (swRes.data.status === "queued" && swRes.data.jobId) {
@@ -759,6 +727,7 @@ class ContentQcCoordinator {
           return;
         }
         this.running = false;
+        this.activeRunImageId = null;
         this.applyQcResponse(swRes.data, false);
         return;
       }
@@ -769,24 +738,31 @@ class ContentQcCoordinator {
 
       if (swRes?.offline && this.settings.offlineFallbackEnabled) {
         const offlineRes = await runOfflineDeterministicQc(req);
+        if (isStaleRun(req.image.imageId)) return;
         this.running = false;
+        this.activeRunImageId = null;
         this.applyQcResponse(offlineRes, true);
         return;
       }
 
       this.showToast(swRes?.error ?? "QC analysis failed.");
       this.running = false;
+      this.activeRunImageId = null;
       this.renderAll();
     } catch (err) {
+      if (isStaleRun()) return;
       this.running = false;
+      this.activeRunImageId = null;
       this.showToast(`QC error: ${String(err)}`);
       this.renderAll();
     }
   }
 
   private applyQcResponse(res: QCResponse, isOffline: boolean): void {
+    if (this.lastImageId && res.imageId && res.imageId !== this.lastImageId) {
+      return;
+    }
     this.response = res;
-    this.assistantClosed = false;
     this.simulateAllActive = false;
     this.simulatedCandidateIds.clear();
     this.locatedCandidateId = null;
@@ -796,11 +772,30 @@ class ContentQcCoordinator {
     this.device = res.engineCapabilities.device;
     this.lastEvaluatedSeq = res.snapshotSeq;
     this.staleSnapshot = false;
-    this.drawerOpen = true;
-    this.liveSceneSimulation =
-      res.sceneSimulation && this.latestSnapshot?.figures?.length
-        ? reconcileSimulationWithFigures(res.sceneSimulation, this.latestSnapshot.figures)
-        : (res.sceneSimulation ?? null);
+    if (!this.assistantClosed) {
+      this.drawerOpen = true;
+    }
+    if (res.sceneSimulation && this.latestSnapshot?.figures?.length) {
+      if (this.latestSnapshot.figures.some((f) => f.geometryType === "bitmap")) {
+        const w = this.lastRequestSnapshot?.image.width ?? this.latestSnapshot.image?.width ?? 16384;
+        const h = this.lastRequestSnapshot?.image.height ?? this.latestSnapshot.image?.height ?? 16384;
+        void warmBitmapBoundingBoxes(this.latestSnapshot.figures, w, h).then((warmed) => {
+          if (warmed && this.response?.sceneSimulation && this.latestSnapshot?.figures?.length) {
+            this.liveSceneSimulation = reconcileSimulationWithFigures(
+              this.response.sceneSimulation,
+              this.latestSnapshot.figures,
+            );
+            this.renderAll();
+          }
+        });
+      }
+      this.liveSceneSimulation = reconcileSimulationWithFigures(
+        res.sceneSimulation,
+        this.latestSnapshot.figures,
+      );
+    } else {
+      this.liveSceneSimulation = res.sceneSimulation ?? null;
+    }
     this.renderAll();
   }
 
@@ -827,10 +822,21 @@ class ContentQcCoordinator {
           : eff.activeFindings.length - 1
         : (currIdx + dir + eff.activeFindings.length) % eff.activeFindings.length;
     const next = eff.activeFindings[nextIdx]!;
-    this.focusFinding(next);
+    this.focusFinding(next, false);
   }
 
-  private focusFinding(finding: QCFinding): void {
+  private focusFinding(finding: QCFinding, allowToggleOff = true): void {
+    if (
+      allowToggleOff &&
+      this.focusedFindingId === finding.findingId &&
+      this.highlightedRect !== null
+    ) {
+      this.focusedFindingId = null;
+      this.highlightedRect = null;
+      this.highlightedLabel = null;
+      this.renderAll();
+      return;
+    }
     this.assistantClosed = false;
     this.focusedFindingId = finding.findingId;
     this.locatedCandidateId = null;
@@ -943,6 +949,26 @@ class ContentQcCoordinator {
     );
   }
 
+  private promptAutoDrawConfirmation(
+    cand: SimulatedObjectCandidate,
+    targetClass: string,
+  ): Promise<boolean> {
+    return new Promise((resolve) => {
+      if (!this.modalMount) {
+        resolve(false);
+        return;
+      }
+      this.pendingAutoDraw = { cand, classTitle: targetClass, resolve };
+      this.renderAll();
+    });
+  }
+
+  private pendingAutoDraw: {
+    cand: SimulatedObjectCandidate;
+    classTitle: string;
+    resolve: (ok: boolean) => void;
+  } | null = null;
+
   private async autoDrawCandidateAnnotation(
     cand: SimulatedObjectCandidate,
     overrideClassTitle: string | null,
@@ -1024,6 +1050,12 @@ class ContentQcCoordinator {
       return;
     }
 
+    const confirmed = await this.promptAutoDrawConfirmation(cand, targetClass);
+    if (!confirmed) {
+      this.showToast(`Auto-Draw cancelled for #${cand.simIndex} (${targetClass}).`);
+      return;
+    }
+
     const classSelection = selectSidebarClassRow(targetClass);
     if (!classSelection.selected) {
       this.showToast(
@@ -1073,7 +1105,7 @@ class ContentQcCoordinator {
 
     if (afterCount > beforeCount || afterDomTotal > beforeDomTotal) {
       this.showToast(
-        `Auto-drew ${targetClass} rectangle for #${cand.simIndex}. Review edges and tags before confirming.`,
+        `Auto-drew ${targetClass} rectangle for #${cand.simIndex} (Cmd/Ctrl+Z to undo). Review edges and tags before confirming.`,
       );
     } else {
       this.showToast(
@@ -1119,36 +1151,58 @@ class ContentQcCoordinator {
       1080;
     const dom = extractDomState(imgW, imgH);
     const canvasRect = dom.canvasRect ?? this.lastKnownCanvasRect;
-    const compact = typeof window !== "undefined" && window.innerWidth < 1200;
 
-    const eff = this.response
-      ? computeEffectiveSummary(this.response, this.dismissedFingerprints)
-      : null;
-
-    const activeSimulation =
-      this.liveSceneSimulation ?? this.response?.sceneSimulation ?? null;
-
-    // 1. TopBar Widget
-    this.topbarMount?.reactRoot.render(
-      createElement(TopBarWidget, {
-        visible: !this.assistantClosed,
+    renderCoordinatorUi({
+      mounts: {
+        topbarMount: this.topbarMount,
+        overlayMount: this.overlayMount,
+        drawerMount: this.drawerMount,
+        modalMount: this.modalMount,
+      },
+      state: {
+        assistantClosed: this.assistantClosed,
+        drawerOpen: this.drawerOpen,
         mode: this.mode,
         running: this.running,
         offline: this.offline,
         device: this.device,
-        overlayVisible: this.settings.overlayVisible,
-        drawerOpen: this.drawerOpen,
-        effectiveScore: eff ? eff.overallScore : null,
-        effectiveReadiness: eff ? eff.readiness : null,
-        compact,
-        floatingPos: this.settings.floatingTopbarPos,
+        staleSnapshot: this.staleSnapshot,
+        settings: this.settings,
         response: this.response,
-        onChangeMode: (nextMode) => {
+        liveSceneSimulation: this.liveSceneSimulation,
+        dismissedFingerprints: this.dismissedFingerprints,
+        simulateAllActive: this.simulateAllActive,
+        simulatedCandidateIds: this.simulatedCandidateIds,
+        locatedCandidateId: this.locatedCandidateId,
+        focusedFindingId: this.focusedFindingId,
+        highlightedRect: this.highlightedRect,
+        highlightedLabel: this.highlightedLabel,
+        profiles: this.profiles,
+        guardOpen: this.guardOpen,
+        guardDecision: this.guardDecision,
+        pendingAutoDraw: this.pendingAutoDraw,
+        toastMessage: this.toastMessage,
+      },
+      dom: {
+        imgW,
+        imgH,
+        canvasRect,
+        minimapRect: dom.minimapRect,
+        viewport: dom.viewport,
+        canvasTransform: this.latestSnapshot?.canvasTransform ?? null,
+        activeClassTitle:
+          dom.activeClassTitle ?? this.latestSnapshot?.uiState.activeClassTitle ?? null,
+        domFigureSummaries: dom.domFigureSummaries,
+        figures: this.latestSnapshot?.figures ?? [],
+        lastRequestSnapshot: this.lastRequestSnapshot,
+      },
+      handlers: {
+        onChangeMode: (nextMode: QCMode) => {
           this.mode = nextMode;
           void saveSettings({ defaultMode: nextMode });
           this.renderAll();
         },
-        onChangeFloatingPos: (pos) => {
+        onChangeFloatingTopbarPos: (pos: { x: number; y: number }) => {
           this.settings = { ...this.settings, floatingTopbarPos: pos };
           void saveSettings({ floatingTopbarPos: pos });
           this.renderAll();
@@ -1159,84 +1213,22 @@ class ContentQcCoordinator {
           this.drawerOpen = !this.drawerOpen;
           this.renderAll();
         },
+        onOpenOptions: () => {
+          void chrome.runtime.sendMessage({ type: "QC_OPEN_OPTIONS_PAGE" }).catch(() => undefined);
+        },
         onCloseAssistant: () => {
           this.assistantClosed = true;
+          this.drawerOpen = false;
+          this.guardOpen = false;
+          this.cancelPendingAndInflightRuns();
           this.locatedCandidateId = null;
           this.highlightedRect = null;
           this.highlightedLabel = null;
+          this.settings = { ...this.settings, assistantClosed: true };
+          void saveSettings({ assistantClosed: true });
           this.renderAll();
         },
-      }),
-    );
-
-    // 2. CanvasOverlay (Raster + Vector SVG + Directional Pills + Minimap Radar)
-    this.overlayMount?.reactRoot.render(
-      createElement(CanvasOverlay, {
-        visible: !this.assistantClosed && this.settings.overlayVisible,
-        canvasRect: canvasRect
-          ? {
-              left: canvasRect.left,
-              top: canvasRect.top,
-              width: canvasRect.width,
-              height: canvasRect.height,
-            }
-          : null,
-        minimapRect: dom.minimapRect
-          ? {
-              left: dom.minimapRect.left,
-              top: dom.minimapRect.top,
-              width: dom.minimapRect.width,
-              height: dom.minimapRect.height,
-            }
-          : null,
-        imageWidth: imgW,
-        imageHeight: imgH,
-        viewport: dom.viewport,
-        canvasTransform: this.latestSnapshot?.canvasTransform ?? null,
-        activeFindings: eff?.activeFindings ?? [],
-        activeMissedObjects: eff?.activeMissedObjects ?? [],
-        sceneSimulation: activeSimulation,
-        showBlueprintGuides: this.simulateAllActive,
-        simulatedCandidateIds: Array.from(this.simulatedCandidateIds),
-        focusedFindingId: this.focusedFindingId,
-        highlightedRect: this.highlightedRect,
-        highlightedLabel: this.highlightedLabel,
-        figures: this.latestSnapshot?.figures ?? [],
-        onClickMissedOverlay: (m) => this.focusMissedObject(m),
-        onClickFindingOverlay: (f) => this.focusFinding(f),
-        onClickSimCandidate: (cand) => this.locateSimulatedCandidate(cand),
-      }),
-    );
-
-    // 3. Dockable QC Drawer
-    this.drawerMount?.reactRoot.render(
-      createElement(QcDrawer, {
-        open: !this.assistantClosed && this.drawerOpen,
-        dockMode: this.settings.drawerDockMode,
-        floatingPos: this.settings.floatingDrawerPos,
-        mode: this.mode,
-        running: this.running,
-        offline: this.offline,
-        staleSnapshot: this.staleSnapshot,
-        response: this.response,
-        sceneSimulation: activeSimulation,
-        showBlueprintGuides: this.simulateAllActive,
-        simulatedCandidateIds: Array.from(this.simulatedCandidateIds),
-        locatedCandidateId: this.locatedCandidateId,
-        experimentalAutoDrawEnabled: this.settings.experimentalAutoDrawEnabled,
-        activeSidebarClass:
-          dom.activeClassTitle ?? this.latestSnapshot?.uiState.activeClassTitle ?? null,
-        domFigureSummaries: dom.domFigureSummaries,
-        profiles: this.profiles,
-        selectedProfileId: this.settings.selectedProfileId,
-        activeFindings: eff?.activeFindings ?? [],
-        effectiveScore: eff ? eff.overallScore : null,
-        effectiveReadiness: eff ? eff.readiness : null,
-        blockerCount: eff?.summaryCounts.blocker ?? 0,
-        warningCount: eff?.summaryCounts.warning ?? 0,
-        infoCount: eff?.summaryCounts.info ?? 0,
-        focusedFindingId: this.focusedFindingId,
-        onClose: () => {
+        onCloseDrawer: () => {
           this.drawerOpen = false;
           this.renderAll();
         },
@@ -1245,12 +1237,12 @@ class ContentQcCoordinator {
           void saveSettings({ drawerDockMode: dock });
           this.renderAll();
         },
-        onChangeFloatingPos: (pos: { x: number; y: number }) => {
+        onChangeFloatingDrawerPos: (pos: { x: number; y: number }) => {
           this.settings = { ...this.settings, floatingDrawerPos: pos };
           void saveSettings({ floatingDrawerPos: pos });
           this.renderAll();
         },
-        onFloatAtPos: (pos: { x: number; y: number }) => {
+        onFloatDrawerAtPos: (pos: { x: number; y: number }) => {
           this.settings = {
             ...this.settings,
             drawerDockMode: "floating",
@@ -1262,103 +1254,68 @@ class ContentQcCoordinator {
           });
           this.renderAll();
         },
-        onChangeMode: (nextMode: QCMode) => {
-          this.mode = nextMode;
-          void saveSettings({ defaultMode: nextMode });
-          this.renderAll();
-        },
         onChangeProfile: (pid: string) => {
           void saveSettings({ selectedProfileId: pid });
         },
-        onRunQc: () => void this.runQc(),
         onSelectFinding: (f) => this.focusFinding(f),
         onStepFinding: (dir) => this.stepFinding(dir),
-        onQuickFix: (fix: QuickFixAction, finding: QCFinding) => {
-          executeQuickFix(fix, finding, {
-            onFocusRect: (rect) => {
-              this.assistantClosed = false;
-              this.ensureOverlayVisible();
-              this.focusedFindingId = finding.findingId;
-              this.locatedCandidateId = null;
-              this.highlightedRect = rect;
-              this.highlightedLabel = fix.label;
-              this.renderAll();
-            },
-            onToast: (m) => this.showToast(m),
-          });
-        },
-        onDismissFinding: (f) => void this.dismissFinding(f),
+        onFocusMissedObject: (m) => this.focusMissedObject(m),
+        onFocusFindingOverlay: (f) => this.focusFinding(f),
+        onLocateSimulatedCandidate: (cand) => this.locateSimulatedCandidate(cand),
         onToggleBlueprintGuides: () => this.toggleSimulateAll(),
         onToggleSimCandidate: (cand) => this.toggleSimCandidate(cand),
         onLocateRect: (bbox) => this.focusSimulatedCandidate(bbox),
-        onLocateCandidate: (cand) => this.locateSimulatedCandidate(cand),
         onAutoDrawCandidate: this.settings.experimentalAutoDrawEnabled
           ? (cand, overrideClassTitle) =>
               void this.autoDrawCandidateAnnotation(cand, overrideClassTitle)
           : undefined,
-        onSelectSidebarClass: (classTitle) => {
-          executeQuickFix(
-            {
-              actionId: `bp_select_${classTitle}`,
-              label: `Switch Sidebar to ${classTitle}`,
-              actionType: "select_sidebar_class",
-              classTitle,
-            },
-            undefined,
-            {
-              onFocusRect: () => {},
-              onToast: (m) => this.showToast(m),
-            },
-          );
+        onDismissFinding: (f) => void this.dismissFinding(f),
+        onFocusQuickFixRect: (rect, finding, fix) => {
+          this.assistantClosed = false;
+          this.ensureOverlayVisible();
+          this.focusedFindingId = finding.findingId;
+          this.locatedCandidateId = null;
+          this.highlightedRect = rect;
+          this.highlightedLabel = fix.label;
           this.renderAll();
         },
-      }),
-    );
-
-    // 4. Confirm Guard Modal + Toast Notification
-    this.modalMount?.reactRoot.render(
-      createElement("div", null, [
-        createElement(ConfirmGuardModal, {
-          key: "confirm-guard-modal",
-          open: this.guardOpen,
-          decision: this.guardDecision,
-          onCancel: () => {
-            this.guardOpen = false;
-            this.renderAll();
-          },
-          onFixFirst: () => {
-            this.guardOpen = false;
-            this.drawerOpen = true;
-            if (this.guardDecision.blockingFindings[0]) {
-              this.focusedFindingId = this.guardDecision.blockingFindings[0].findingId;
-              this.highlightedRect =
-                this.guardDecision.blockingFindings[0].focusRect ?? null;
-            }
-            this.renderAll();
-          },
-          onReRunQc: () => {
-            this.guardOpen = false;
-            this.renderAll();
-            void this.runQc();
-          },
-          onConfirmAnyway: () => {
-            this.guardOpen = false;
-            this.renderAll();
-            if (this.pendingConfirmTarget) {
-              this.bypassNextConfirmClick = true;
-              this.pendingConfirmTarget.click();
-            }
-          },
-        }),
-        this.toastMessage
-          ? createElement(
-              "div",
-              { key: "toast", className: "qc-toast", "data-testid": "qc-toast" },
-              this.toastMessage,
-            )
-          : null,
-      ]),
-    );
+        onToast: (m) => this.showToast(m),
+        onClearPendingAutoDraw: (accepted) => {
+          const p = this.pendingAutoDraw;
+          this.pendingAutoDraw = null;
+          this.renderAll();
+          p?.resolve(accepted);
+        },
+        onGuardCancel: () => {
+          this.guardOpen = false;
+          this.renderAll();
+        },
+        onGuardFixFirst: () => {
+          this.guardOpen = false;
+          this.drawerOpen = true;
+          if (this.guardDecision.blockingFindings[0]) {
+            this.focusedFindingId = this.guardDecision.blockingFindings[0].findingId;
+            this.highlightedRect =
+              this.guardDecision.blockingFindings[0].focusRect ?? null;
+          }
+          this.renderAll();
+        },
+        onGuardReRunQc: () => {
+          this.guardOpen = false;
+          this.renderAll();
+          void this.runQc();
+        },
+        onGuardConfirmAnyway: () => {
+          this.guardOpen = false;
+          this.renderAll();
+          if (this.pendingConfirmTarget) {
+            this.bypassNextConfirmClick = true;
+            this.pendingConfirmTarget.click();
+          }
+        },
+        onRender: () => this.renderAll(),
+      },
+    });
   }
 }
 

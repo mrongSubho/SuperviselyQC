@@ -1,8 +1,11 @@
+import { deflateSync } from "node:zlib";
 import { createElement, act } from "react";
+import type { MissedObjectOverlay } from "../../../extension/src/shared/types";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { executeQuickFix, extractDomState } from "../../../extension/src/content/domObserver";
 import { reconcileSimulationWithFigures } from "../../../extension/src/content/index";
+import { warmBitmapBoundingBoxes } from "../../../extension/src/content/simulationMatch";
 import { CanvasOverlay } from "../../../extension/src/content/ui/CanvasOverlay";
 import { QcDrawer } from "../../../extension/src/content/ui/QcDrawer";
 import { TopBarWidget } from "../../../extension/src/content/ui/TopBarWidget";
@@ -503,8 +506,9 @@ describe("Scene Simulation Blueprint UI, Overlays & Sidebar DOM Quick Fix", () =
     expect(onFloatAtPos).toHaveBeenCalledTimes(2);
   });
 
-  it("supports hiding TopBarWidget via exit button and visible=false", async () => {
+  it("supports hiding TopBarWidget via exit button and opening Options via options icon", async () => {
     const onCloseAssistant = vi.fn();
+    const onOpenOptions = vi.fn();
     await act(async () => {
       root.render(
         createElement(TopBarWidget, {
@@ -524,10 +528,20 @@ describe("Scene Simulation Blueprint UI, Overlays & Sidebar DOM Quick Fix", () =
           onRunQc: vi.fn(),
           onToggleOverlay: vi.fn(),
           onToggleDrawer: vi.fn(),
+          onOpenOptions,
           onCloseAssistant,
         }),
       );
     });
+
+    const optionsBtn = container.querySelector(
+      '[data-testid="qc-topbar-options"]',
+    ) as HTMLButtonElement;
+    expect(optionsBtn).not.toBeNull();
+    await act(async () => {
+      optionsBtn.click();
+    });
+    expect(onOpenOptions).toHaveBeenCalledTimes(1);
 
     const closeBtn = container.querySelector('[data-testid="qc-topbar-close"]') as HTMLButtonElement;
     expect(closeBtn).not.toBeNull();
@@ -796,5 +810,455 @@ describe("Scene Simulation Blueprint UI, Overlays & Sidebar DOM Quick Fix", () =
     expect(updated.candidates[0]?.matchedFigureId).toBe("fig_exact");
     expect(updated.candidates[1]?.matchedFigureId).toBe("fig_unknown_hi_iou");
     expect(updated.candidates[2]?.matchedFigureId).toBeNull();
+  });
+
+  it("hides all unclicked activeMissedObjects marks on canvas when Simulate All / Sim / Locate are off and toggles visible safely", async () => {
+    const sim = buildHorseSimulation(3);
+    const missed = [
+      {
+        missedId: "miss_horse_4",
+        classTitle: "Horse",
+        geometryType: "rectangle" as const,
+        bbox: sim.candidates[3]!.bbox,
+        confidence: 0.88,
+        sharpnessScore: 41.0,
+        outsideViewport: false,
+        detectorModel: "yolo11s",
+      },
+      {
+        missedId: "miss_horse_10",
+        classTitle: "Horse",
+        geometryType: "rectangle" as const,
+        bbox: sim.candidates[9]!.bbox,
+        confidence: 0.79,
+        sharpnessScore: 39.0,
+        outsideViewport: true,
+        viewportEdgeDirection: "right" as const,
+        detectorModel: "yolo11s",
+      },
+    ];
+
+    const overlayProps = {
+      visible: false,
+      canvasRect: { left: 0, top: 0, width: 960, height: 540 },
+      minimapRect: { left: 1000, top: 20, width: 180, height: 120 },
+      imageWidth: 3840,
+      imageHeight: 2160,
+      viewport: {
+        zoomPercent: 100,
+        visibleNormRect: [0, 0, 1, 1] as [number, number, number, number],
+        visiblePixelRect: [0, 0, 3840, 2160] as [number, number, number, number],
+        canvasSize: { width: 960, height: 540 },
+        source: "fallback_full" as const,
+      },
+      activeFindings: [],
+      activeMissedObjects: missed,
+      sceneSimulation: sim,
+      showBlueprintGuides: false,
+      simulatedCandidateIds: [],
+      focusedFindingId: null,
+      highlightedRect: null,
+      figures: [],
+      onClickMissedOverlay: vi.fn(),
+      onClickFindingOverlay: vi.fn(),
+    };
+
+    // Mount with visible=false first, then toggle visible=true (verifies hook order invariant too)
+    await act(async () => {
+      root.render(createElement(CanvasOverlay, overlayProps));
+    });
+    await act(async () => {
+      root.render(createElement(CanvasOverlay, { ...overlayProps, visible: true }));
+    });
+
+    expect(container.querySelector('[data-testid="qc-missed-box-miss_horse_4"]')).toBeNull();
+    expect(container.querySelector('[data-testid="qc-edge-pill-miss_horse_10"]')).toBeNull();
+    expect(container.querySelector('[data-testid="qc-sim-guide-4"]')).toBeNull();
+    expect(container.querySelectorAll('[data-testid="qc-minimap-radar"] span')).toHaveLength(0);
+
+    // Even when Simulate All is clicked, Scene Blueprint guides show once without duplicate Missed boxes
+    await act(async () => {
+      root.render(
+        createElement(CanvasOverlay, {
+          ...overlayProps,
+          visible: true,
+          showBlueprintGuides: true,
+        }),
+      );
+    });
+    expect(container.querySelector('[data-testid="qc-sim-guide-4"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="qc-missed-box-miss_horse_4"]')).toBeNull();
+  });
+
+  it("renders Truncation and combined Occlusion + Truncation tags in Blueprint and CanvasOverlay without 'Border' tag text", async () => {
+    const sim: SceneSimulationPlan = {
+      totalTargetObjects: 2,
+      completedTargetObjects: 0,
+      primaryTargetClasses: ["Boat"],
+      classSummaries: [
+        {
+          classTitle: "Boat",
+          recommendedShape: "rectangle",
+          totalCount: 2,
+          completedCount: 0,
+          remainingCount: 2,
+          foregroundClearCount: 0,
+          occludedCount: 1,
+          borderTruncatedCount: 2,
+          tagCounts: { Occlusion: 1, Truncation: 2 },
+        },
+      ],
+      candidates: [
+        {
+          simId: "sim_01",
+          simIndex: 1,
+          classTitle: "Boat",
+          recommendedShape: "rectangle",
+          bbox: [0, 300, 420, 720],
+          confidence: 0.91,
+          sharpnessScore: 42.0,
+          visibilityStatus: "border_truncated",
+          occludedBySimIndices: [],
+          overlapIouMax: 0,
+          overlapCoverRatio: 0,
+          recommendedObjectTags: [
+            {
+              tagName: "Truncation",
+              value: null,
+              reason: "Cut off at image frame edge; apply Truncation tag.",
+              confidence: 0.88,
+            },
+          ],
+          outsideViewport: false,
+        },
+        {
+          simId: "sim_02",
+          simIndex: 2,
+          classTitle: "Boat",
+          recommendedShape: "rectangle",
+          bbox: [3200, 340, 3836, 780],
+          confidence: 0.9,
+          sharpnessScore: 41.0,
+          visibilityStatus: "occluded",
+          occludedBySimIndices: [3],
+          overlapIouMax: 0.22,
+          overlapCoverRatio: 0.35,
+          recommendedObjectTags: [
+            {
+              tagName: "Occlusion",
+              value: null,
+              reason: "Occluded behind foreground Boat (#3)",
+              confidence: 0.89,
+            },
+            {
+              tagName: "Truncation",
+              value: null,
+              reason: "Cut off at image frame edge; apply Truncation tag.",
+              confidence: 0.88,
+            },
+          ],
+          outsideViewport: false,
+        },
+      ],
+      recommendedImageTags: [],
+      misplacedImageTags: [],
+      ignoredOntologyClasses: [],
+      disambiguationNotes: [],
+      activeSidebarClassWarning: null,
+    };
+
+    const resp = buildMockResponse(sim);
+    await act(async () => {
+      root.render(
+        createElement("div", null, [
+          createElement(QcDrawer, {
+            key: "dr",
+            open: true,
+            dockMode: "floating",
+            floatingPos: { x: 820, y: 120 },
+            mode: "standard",
+            running: false,
+            offline: false,
+            staleSnapshot: false,
+            response: resp,
+            sceneSimulation: sim,
+            showBlueprintGuides: true,
+            profiles: [],
+            selectedProfileId: "auto",
+            activeFindings: [],
+            effectiveScore: 84,
+            effectiveReadiness: "needs_review",
+            blockerCount: 0,
+            warningCount: 1,
+            infoCount: 0,
+            focusedFindingId: null,
+            onClose: vi.fn(),
+            onChangeDockMode: vi.fn(),
+            onChangeFloatingPos: vi.fn(),
+            onChangeMode: vi.fn(),
+            onChangeProfile: vi.fn(),
+            onRunQc: vi.fn(),
+            onSelectFinding: vi.fn(),
+            onStepFinding: vi.fn(),
+            onQuickFix: vi.fn(),
+            onDismissFinding: vi.fn(),
+          }),
+          createElement(CanvasOverlay, {
+            key: "ov",
+            visible: true,
+            canvasRect: { left: 0, top: 0, width: 960, height: 540 },
+            minimapRect: null,
+            imageWidth: 3840,
+            imageHeight: 2160,
+            viewport: {
+              zoomPercent: 100,
+              visibleNormRect: [0, 0, 1, 1],
+              visiblePixelRect: [0, 0, 3840, 2160],
+              canvasSize: { width: 960, height: 540 },
+              source: "fallback_full",
+            },
+            activeFindings: [],
+            activeMissedObjects: [],
+            sceneSimulation: sim,
+            showBlueprintGuides: true,
+            focusedFindingId: null,
+            highlightedRect: null,
+            figures: [],
+            onClickMissedOverlay: vi.fn(),
+            onClickFindingOverlay: vi.fn(),
+          }),
+        ]),
+      );
+    });
+
+    const panel = container.querySelector('[data-testid="qc-blueprint-panel"]')!;
+    expect(panel.textContent).toContain("1 🏷 Occlusion");
+    expect(panel.textContent).toContain("2 🏷 Truncation");
+    expect(panel.textContent).not.toContain("Border");
+
+    const item1 = container.querySelector('[data-testid="qc-bp-item-1"]')!;
+    const item2 = container.querySelector('[data-testid="qc-bp-item-2"]')!;
+    expect(item1.textContent).toContain("🏷 Truncation");
+    expect(item2.textContent).toContain("🏷 Occlusion (behind #3 · 35%)");
+    expect(item2.textContent).toContain("🏷 Truncation");
+
+    const guide1Rect = container.querySelector('[data-testid="qc-sim-guide-1"] rect');
+    const guide1Text = container.querySelector('[data-testid="qc-sim-guide-1"] text');
+    const guide2Text = container.querySelector('[data-testid="qc-sim-guide-2"] text');
+    expect(guide1Rect?.getAttribute("stroke")).toBe("#fb923c");
+    expect(guide1Text?.textContent).toContain("#1 Boat · 🏷 Truncation");
+    expect(guide2Text?.textContent).toContain("#2 Boat · 🏷 Occ (behind #3) + Truncation");
+  });
+
+  it("matches bitmap Brush figures via warmBitmapBoundingBoxes and renders contour polygons in CanvasOverlay", async () => {
+    const makePngChunk = (type: string, data: Buffer): Buffer => {
+      const len = Buffer.alloc(4);
+      len.writeUInt32BE(data.length, 0);
+      const tBuf = Buffer.from(type, "ascii");
+      const body = Buffer.concat([tBuf, data]);
+      let crc = 0xffffffff;
+      for (const byte of body) {
+        crc ^= byte;
+        for (let b = 0; b < 8; b += 1) {
+          crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
+        }
+      }
+      const cBuf = Buffer.alloc(4);
+      cBuf.writeUInt32BE((crc ^ 0xffffffff) >>> 0, 0);
+      return Buffer.concat([len, body, cBuf]);
+    };
+    const makeBitmapData = (w: number, h: number): string => {
+      const raw = Buffer.alloc(h * (1 + w * 4), 0);
+      for (let y = 0; y < h; y += 1) {
+        const rowOff = y * (1 + w * 4);
+        raw[rowOff] = 0;
+        for (let x = 0; x < w; x += 1) {
+          const pxOff = rowOff + 1 + x * 4;
+          raw[pxOff] = 255;
+          raw[pxOff + 3] = 255;
+        }
+      }
+      const ihdr = Buffer.alloc(13, 0);
+      ihdr.writeUInt32BE(w, 0);
+      ihdr.writeUInt32BE(h, 4);
+      ihdr[8] = 8; // bitDepth
+      ihdr[9] = 6; // RGBA
+      const png = Buffer.concat([
+        Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+        makePngChunk("IHDR", ihdr),
+        makePngChunk("IDAT", deflateSync(raw)),
+        makePngChunk("IEND", Buffer.alloc(0)),
+      ]);
+      return deflateSync(png).toString("base64");
+    };
+
+    const bmFig: AnnotationFigure = {
+      figureId: "fig_bm_biscuit_1",
+      classId: 801,
+      classTitle: "Biscuit_B",
+      geometryType: "bitmap",
+      bitmap: {
+        origin: [100, 120],
+        data: makeBitmapData(320, 320),
+      },
+      tags: [],
+    };
+    const warmed = await warmBitmapBoundingBoxes([bmFig], 2000, 1600);
+    expect(warmed).toBe(true);
+
+    const sim: SceneSimulationPlan = {
+      totalTargetObjects: 2,
+      completedTargetObjects: 0,
+      primaryTargetClasses: ["Biscuit_B"],
+      classSummaries: [
+        {
+          classTitle: "Biscuit_B",
+          recommendedShape: "bitmap",
+          totalCount: 2,
+          completedCount: 0,
+          remainingCount: 2,
+          foregroundClearCount: 2,
+          occludedCount: 0,
+          borderTruncatedCount: 0,
+          tagCounts: {},
+        },
+      ],
+      candidates: [
+        {
+          simId: "bp_bm_1",
+          simIndex: 1,
+          classTitle: "Biscuit_B",
+          recommendedShape: "bitmap",
+          bbox: [110, 130, 410, 430],
+          confidence: 0.94,
+          sharpnessScore: 80,
+          visibilityStatus: "foreground_clear",
+          occludedBySimIndices: [],
+          overlapIouMax: 0,
+          overlapCoverRatio: 0,
+          recommendedObjectTags: [],
+          outsideViewport: false,
+          matchedFigureId: null,
+        },
+        {
+          simId: "bp_bm_2",
+          simIndex: 2,
+          classTitle: "Biscuit_B",
+          recommendedShape: "bitmap",
+          bbox: [900, 200, 1400, 700],
+          polygonPoints: [
+            [
+              [950, 240],
+              [1360, 240],
+              [1360, 660],
+              [950, 660],
+            ],
+          ],
+          confidence: 0.91,
+          sharpnessScore: 80,
+          visibilityStatus: "foreground_clear",
+          occludedBySimIndices: [],
+          overlapIouMax: 0,
+          overlapCoverRatio: 0,
+          recommendedObjectTags: [],
+          outsideViewport: false,
+          matchedFigureId: null,
+        },
+      ],
+      recommendedImageTags: [],
+      misplacedImageTags: [],
+      ignoredOntologyClasses: [],
+      disambiguationNotes: [],
+      activeSidebarClassWarning: null,
+    };
+
+    const reconciled = reconcileSimulationWithFigures(sim, [bmFig])!;
+    expect(reconciled.completedTargetObjects).toBe(1);
+    expect(reconciled.candidates[0]?.matchedFigureId).toBe("fig_bm_biscuit_1");
+    expect(reconciled.candidates[1]?.matchedFigureId).toBeNull();
+
+    const missedBm: MissedObjectOverlay = {
+      missedId: "miss_bm_2",
+      classTitle: "Biscuit_B",
+      geometryType: "bitmap",
+      bbox: [1450, 850, 1850, 1250],
+      polygonPoints: [
+        [
+          [1480, 880],
+          [1820, 880],
+          [1820, 1220],
+          [1480, 1220],
+        ],
+      ],
+      confidence: 0.91,
+      sharpnessScore: 80,
+      outsideViewport: false,
+      detectorModel: "yolov8s-worldv2",
+    };
+
+    await act(async () => {
+      root.render(
+        createElement(CanvasOverlay, {
+          visible: true,
+          canvasRect: { left: 0, top: 0, width: 1000, height: 800 },
+          minimapRect: null,
+          imageWidth: 2000,
+          imageHeight: 1600,
+          viewport: {
+            zoomPercent: 100,
+            visibleNormRect: [0, 0, 1, 1],
+            visiblePixelRect: [0, 0, 2000, 1600],
+            canvasSize: { width: 1000, height: 800 },
+            source: "fallback_full",
+          },
+          activeFindings: [],
+          activeMissedObjects: [missedBm],
+          sceneSimulation: reconciled,
+          showBlueprintGuides: true,
+          focusedFindingId: null,
+          highlightedRect: null,
+          figures: [bmFig],
+          onClickMissedOverlay: vi.fn(),
+          onClickFindingOverlay: vi.fn(),
+        }),
+      );
+    });
+
+    const simPoly = container.querySelector('[data-testid="qc-sim-guide-2"] polygon');
+    expect(simPoly).not.toBeNull();
+
+    // When sceneSimulation is null (pure missed-object overlay mode), CanvasOverlay renders polygon contours for missed Brush/Polygon objects
+    await act(async () => {
+      root.render(
+        createElement(CanvasOverlay, {
+          visible: true,
+          canvasRect: { left: 0, top: 0, width: 1000, height: 800 },
+          minimapRect: null,
+          imageWidth: 2000,
+          imageHeight: 1600,
+          viewport: {
+            zoomPercent: 100,
+            visibleNormRect: [0, 0, 1, 1],
+            visiblePixelRect: [0, 0, 2000, 1600],
+            canvasSize: { width: 1000, height: 800 },
+            source: "fallback_full",
+          },
+          activeFindings: [],
+          activeMissedObjects: [missedBm],
+          sceneSimulation: null,
+          showBlueprintGuides: true,
+          focusedFindingId: null,
+          highlightedRect: null,
+          figures: [bmFig],
+          onClickMissedOverlay: vi.fn(),
+          onClickFindingOverlay: vi.fn(),
+        }),
+      );
+    });
+
+    const missPoly = container.querySelector('[data-testid="qc-missed-box-miss_bm_2"] polygon');
+    const missRect = container.querySelector('[data-testid="qc-missed-box-miss_bm_2"] rect');
+    expect(missPoly).not.toBeNull();
+    expect(missRect).toBeNull();
   });
 });

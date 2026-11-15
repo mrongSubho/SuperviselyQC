@@ -38,6 +38,7 @@ export interface QcDrawerProps {
   warningCount: number;
   infoCount: number;
   focusedFindingId: string | null;
+  hasActiveHighlight?: boolean;
   onClose: () => void;
   onChangeDockMode: (dock: DrawerDockMode) => void;
   onChangeFloatingPos: (pos: { x: number; y: number }) => void;
@@ -87,6 +88,7 @@ export function QcDrawer({
   warningCount,
   infoCount,
   focusedFindingId,
+  hasActiveHighlight = true,
   onClose,
   onChangeDockMode,
   onChangeFloatingPos,
@@ -419,7 +421,7 @@ export function QcDrawer({
                 <span className="qc-bp-prescription">Pre-Annotation Scene Simulation</span>
               </div>
               <div className="qc-bp-progress">
-                Run Standard or Deep QC to detect target objects, depth-ordered occlusion/border tags, and guided canvas overlays before drawing.
+                Run Standard or Deep QC to detect target objects, depth-ordered Occlusion / Truncation tags, and guided canvas overlays before drawing.
               </div>
               <div style={{ marginTop: "8px" }}>
                 <button
@@ -458,15 +460,23 @@ export function QcDrawer({
               <div className="qc-bp-prescription-list">
                 {sim.classSummaries.length > 0 ? (
                   sim.classSummaries.map((cs) => {
-                    const occTxt =
-                      cs.occludedCount > 0 ? ` · ${cs.occludedCount} 🏷 Occlusion` : "";
-                    const truncTxt =
-                      cs.borderTruncatedCount > 0
-                        ? ` · ${cs.borderTruncatedCount} Border`
-                        : "";
+                    const tagEntries = Object.entries(cs.tagCounts ?? {}).filter(
+                      ([, count]) => count > 0,
+                    );
+                    const hasOccTag = tagEntries.some(
+                      ([tag]) => tag.trim().toLowerCase() === "occlusion",
+                    );
+                    const hasTruncTag = tagEntries.some(([tag]) => /^truncat/i.test(tag));
+                    const tagParts = tagEntries.map(([tag, count]) => ` · ${count} 🏷 ${tag}`);
+                    if (!hasOccTag && cs.occludedCount > 0) {
+                      tagParts.unshift(` · ${cs.occludedCount} 🏷 Occlusion`);
+                    }
+                    if (!hasTruncTag && cs.borderTruncatedCount > 0) {
+                      tagParts.push(` · ${cs.borderTruncatedCount} 🏷 Truncation`);
+                    }
                     return (
                       <div key={cs.classTitle} className="qc-bp-prescription">
-                        {`${cs.totalCount} × ${cs.classTitle} (${cs.recommendedShape}) · ${cs.foregroundClearCount} Clear${occTxt}${truncTxt}`}
+                        {`${cs.totalCount} × ${cs.classTitle} (${cs.recommendedShape}) · ${cs.foregroundClearCount} Clear${tagParts.join("")}`}
                       </div>
                     );
                   })
@@ -517,7 +527,7 @@ export function QcDrawer({
 
             {sim.misplacedImageTags.length > 0 && (
               <div className="qc-bp-note" data-testid="qc-bp-misplaced-tags">
-                {`Misplaced in CURRENT IMAGE TAGS: ${sim.misplacedImageTags.join(", ")} — apply to occluded objects instead.`}
+                {`Misplaced in CURRENT IMAGE TAGS: ${sim.misplacedImageTags.join(", ")} — apply to object figures instead.`}
               </div>
             )}
 
@@ -540,14 +550,32 @@ export function QcDrawer({
                   return (
                     cand.classTitle.toLowerCase().includes(q) ||
                     `#${cand.simIndex}`.includes(q) ||
-                    cand.visibilityStatus.toLowerCase().includes(q)
+                    cand.visibilityStatus.toLowerCase().includes(q) ||
+                    (cand.visibilityStatus === "border_truncated" && "truncation".includes(q)) ||
+                    cand.recommendedObjectTags.some((t) => t.tagName.toLowerCase().includes(q))
                   );
                 })
                 .map((cand) => {
                   const done = Boolean(cand.matchedFigureId);
                   const occluded = cand.visibilityStatus === "occluded";
+                  const truncTag = cand.recommendedObjectTags.find((t) =>
+                    /^truncat/i.test(t.tagName),
+                  );
+                  const isTruncated =
+                    cand.visibilityStatus === "border_truncated" || Boolean(truncTag);
+                  const extraTags = cand.recommendedObjectTags.filter(
+                    (t) =>
+                      t.tagName.trim().toLowerCase() !== "occlusion" &&
+                      !/^truncat/i.test(t.tagName),
+                  );
                   const coverPct = Math.round(cand.overlapCoverRatio * 100);
-                  const rowCls = done ? "completed" : occluded ? "occluded" : "";
+                  const rowCls = done
+                    ? "completed"
+                    : occluded
+                      ? "occluded"
+                      : isTruncated
+                        ? "truncated"
+                        : "";
                   const isLocated = locatedCandidateId === cand.simId;
                   const isSimActive =
                     showBlueprintGuides || simulatedCandidateSet.has(cand.simId);
@@ -563,22 +591,30 @@ export function QcDrawer({
                         </span>
                         {done ? (
                           <span className="qc-bp-badge completed">{`Done (${cand.matchedFigureId})`}</span>
-                        ) : occluded ? (
-                          <span className="qc-bp-badge occluded">
-                            {`🏷 Occlusion (${
-                              cand.occludedBySimIndices.length > 0
-                                ? `behind ${cand.occludedBySimIndices.map((i) => `#${i}`).join(", ")}`
-                                : "occluded"
-                            }${coverPct > 0 ? ` · ${coverPct}%` : ""})`}
-                          </span>
-                        ) : cand.visibilityStatus === "border_truncated" ? (
-                          <span className="qc-bp-badge clear">
-                            {cand.recommendedObjectTags.length > 0
-                              ? `Border · 🏷 ${cand.recommendedObjectTags.map((t) => t.tagName).join(", ")}`
-                              : "Border Truncated"}
-                          </span>
-                        ) : (
+                        ) : !occluded && !isTruncated && extraTags.length === 0 ? (
                           <span className="qc-bp-badge clear">Clear — No Tag</span>
+                        ) : (
+                          <div className="qc-bp-badge-row">
+                            {occluded && (
+                              <span className="qc-bp-badge occluded">
+                                {`🏷 Occlusion (${
+                                  cand.occludedBySimIndices.length > 0
+                                    ? `behind ${cand.occludedBySimIndices.map((i) => `#${i}`).join(", ")}`
+                                    : "occluded"
+                                }${coverPct > 0 ? ` · ${coverPct}%` : ""})`}
+                              </span>
+                            )}
+                            {isTruncated && (
+                              <span className="qc-bp-badge truncated">
+                                {`🏷 ${truncTag?.tagName ?? "Truncation"}`}
+                              </span>
+                            )}
+                            {extraTags.map((t) => (
+                              <span key={t.tagName} className="qc-bp-badge occluded">
+                                {`🏷 ${t.tagName}`}
+                              </span>
+                            ))}
+                          </div>
                         )}
                       </div>
                       <div className="qc-bp-item-actions">
@@ -678,10 +714,11 @@ export function QcDrawer({
                       {fix.label}
                     </button>
                   ))}
-                  {finding.focusRect && finding.suggestedFixes.length === 0 && (
+                  {finding.focusRect && (
                     <button
                       type="button"
-                      className="qc-btn"
+                      aria-pressed={focused && hasActiveHighlight}
+                      className={`qc-btn ${focused && hasActiveHighlight ? "qc-btn-locate-active" : ""}`}
                       onClick={(e) => {
                         e.stopPropagation();
                         onSelectFinding(finding);

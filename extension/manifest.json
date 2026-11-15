@@ -40,7 +40,6 @@
     }
   ],
   "action": {
-    "default_popup": "src/popup/index.html",
     "default_title": "Supervisely Hybrid QC Assistant",
     "default_icon": {
       "16": "icons/icon16.png",

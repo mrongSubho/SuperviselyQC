@@ -4,7 +4,7 @@ import hashlib
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import numpy as np
 
@@ -15,7 +15,14 @@ from app.rules.context import (
     bbox_iou_and_ios,
     compute_viewport_status,
 )
-from app.schemas.qc import MissedObjectOverlay, QCFinding, QCMode, SceneSimulationPlan
+from app.schemas.qc import (
+    BoundingBoxTuple,
+    MissedObjectOverlay,
+    QCFinding,
+    QCMode,
+    SceneSimulationPlan,
+)
+from app.vision.detector import infer_shape_from_ontology_title, strip_ontology_tool_suffix
 from app.vision.model_manager import ModelManager
 
 if TYPE_CHECKING:
@@ -81,10 +88,17 @@ def filter_and_build_missed_objects(
             continue
 
         already_labeled = False
+        det_stem = strip_ontology_tool_suffix(det.class_title).lower()
         for nf in user_2d:
             iou, _, ios_det, _ = bbox_iou_and_ios(nf.bbox, det.bbox)
-            same_cls = nf.figure.class_title.lower() == det.class_title.lower()
-            if same_cls and (iou >= 0.35 or ios_det >= 0.65):
+            fig_stem = strip_ontology_tool_suffix(nf.figure.class_title).lower()
+            same_cls = (
+                nf.figure.class_title.lower() == det.class_title.lower()
+                or fig_stem == det_stem
+            )
+            iou_floor = 0.28 if nf.figure.geometry_type in {"bitmap", "polygon"} else 0.35
+            ios_floor = 0.55 if nf.figure.geometry_type in {"bitmap", "polygon"} else 0.65
+            if same_cls and (iou >= iou_floor or ios_det >= ios_floor):
                 already_labeled = True
                 break
             if iou >= 0.60:
@@ -121,11 +135,22 @@ def filter_and_build_missed_objects(
         )
         sig = f"{ctx.request.image.image_id}:{det.class_title}:{round(dx1, 1)}:{round(dy1, 1)}:{idx}"
         missed_id = f"miss_{hashlib.sha1(sig.encode('utf-8')).hexdigest()[:10]}"
+        cls_def = ctx.classes_by_title.get(det.class_title)
+        raw_shape = (
+            cls_def.shape
+            if (cls_def and cls_def.shape != "any")
+            else infer_shape_from_ontology_title(det.class_title)
+        )
+        missed_geom: Literal["rectangle", "polygon", "bitmap"] = (
+            cast(Literal["rectangle", "polygon", "bitmap"], raw_shape)
+            if raw_shape in {"rectangle", "polygon", "bitmap"}
+            else "rectangle"
+        )
         missed.append(
             MissedObjectOverlay(
                 missed_id=missed_id,
                 class_title=det.class_title,
-                geometry_type="rectangle",
+                geometry_type=missed_geom,
                 bbox=clamped_bbox,
                 polygon_points=None,
                 confidence=round(det.confidence, 3),
@@ -336,8 +361,16 @@ class VisionPipeline:
         if _cancelled():
             return VisionOutput(device=device, models_used=models_used)
 
-        # Stage 1: Bokeh scorer (pure OpenCV native 1:1) + user figure blur audit
-        bokeh_scorer = bokeh_cls(rgb)
+        # Stage 1: Bokeh scorer (native 1:1, or coordinate-scaled if preview rgb) + user blur audit
+        rgb_h, rgb_w = rgb.shape[:2]
+        coord_sx = float(ctx.width) / float(max(rgb_w, 1))
+        coord_sy = float(ctx.height) / float(max(rgb_h, 1))
+        needs_coord_scale = abs(coord_sx - 1.0) > 0.015 or abs(coord_sy - 1.0) > 0.015
+        bokeh_scorer = (
+            bokeh_cls(rgb, coord_width=float(ctx.width), coord_height=float(ctx.height))
+            if needs_coord_scale
+            else bokeh_cls(rgb)
+        )
         if progress_cb:
             progress_cb("bokeh_gate", 0.25)
         findings.extend(audit_user_bokeh_figures(ctx, bokeh_scorer))
@@ -354,6 +387,15 @@ class VisionPipeline:
             device=device,
             use_open_vocab=(mode == "deep"),
         )
+        if needs_coord_scale and candidates:
+            for cand in candidates:
+                bx1, by1, bx2, by2 = cand.bbox
+                cand.bbox = (
+                    bx1 * coord_sx,
+                    by1 * coord_sy,
+                    bx2 * coord_sx,
+                    by2 * coord_sy,
+                )
         models_used.extend(det_models)
         if det_device in {"mps", "cpu"}:
             device = det_device
@@ -434,14 +476,47 @@ class VisionPipeline:
             )
             findings.extend(missed_findings)
 
-        # Stage 4: Deep-mode SAM 2.1 Hiera-Tiny boundary & tightness audit
+        # Stage 4: Deep-mode SAM 2.1 Hiera-Tiny boundary & tightness audit + contour guides
         if mode == "deep":
             if progress_cb:
                 progress_cb("sam_tightness", 0.80)
             sam_findings, sam_model = tightness_auditor.audit(ctx, rgb, device)
             findings.extend(sam_findings)
-            if sam_model:
+            if sam_model and sam_model not in models_used:
                 models_used.append(sam_model)
+
+            seg_fn = getattr(tightness_auditor, "segment_bboxes_to_polygons", None)
+            if callable(seg_fn):
+                contour_targets: list[tuple[str, int, BoundingBoxTuple]] = []
+                if scene_simulation is not None:
+                    for idx, sc in enumerate(scene_simulation.candidates):
+                        if (
+                            sc.recommended_shape in {"bitmap", "polygon"}
+                            and sc.matched_figure_id is None
+                            and len(contour_targets) < 12
+                        ):
+                            contour_targets.append(("sim", idx, sc.bbox))
+                for idx, mo in enumerate(missed_objects):
+                    if mo.geometry_type in {"bitmap", "polygon"} and len(contour_targets) < 16:
+                        contour_targets.append(("miss", idx, mo.bbox))
+                if contour_targets:
+                    polys_out, poly_model = seg_fn(
+                        ctx,
+                        rgb,
+                        [t[2] for t in contour_targets],
+                        device,
+                    )
+                    if poly_model and poly_model not in models_used:
+                        models_used.append(poly_model)
+                    for (kind, target_idx, _), rings in zip(
+                        contour_targets, polys_out, strict=False
+                    ):
+                        if not rings:
+                            continue
+                        if kind == "sim" and scene_simulation is not None:
+                            scene_simulation.candidates[target_idx].polygon_points = rings
+                        elif kind == "miss":
+                            missed_objects[target_idx].polygon_points = rings
 
         if _cancelled():
             return VisionOutput(

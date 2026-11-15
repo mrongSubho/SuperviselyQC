@@ -65,101 +65,102 @@ def evaluate_sam_mask_against_figure(
     ux1, uy1, ux2, uy2 = nf.bbox
     findings: list[QCFinding] = []
 
-    # 1. GEOM_BOX_CLIPPED: Recall = Area(M_sam ∩ B_user) / Area(M_sam) < 0.88 + >10px protrusion
-    ix1 = max(0, int(round(ux1)))
-    iy1 = max(0, int(round(uy1)))
-    ix2 = min(ctx.width, int(round(ux2)))
-    iy2 = min(ctx.height, int(round(uy2)))
-    sam_area = max(int(np.count_nonzero(clean_mask)), 1)
-    inside_area = (
-        int(np.count_nonzero(clean_mask[iy1:iy2, ix1:ix2]))
-        if (ix2 > ix1 and iy2 > iy1)
-        else 0
-    )
-    recall = inside_area / float(sam_area)
-    max_protrusion = max(
-        ux1 - sam_bbox[0],
-        uy1 - sam_bbox[1],
-        sam_bbox[2] - ux2,
-        sam_bbox[3] - uy2,
-        0.0,
-    )
-    if recall < ctx.tunables.sam_clipped_recall_min and max_protrusion > 10.0:
-        merged_rect: BoundingBoxTuple = (
-            min(ux1, sam_bbox[0]),
-            min(uy1, sam_bbox[1]),
-            max(ux2, sam_bbox[2]),
-            max(uy2, sam_bbox[3]),
+    if fig.geometry_type == "rectangle":
+        # 1. GEOM_BOX_CLIPPED: Recall = Area(M_sam ∩ B_user) / Area(M_sam) < 0.88 + >10px protrusion
+        ix1 = max(0, int(round(ux1)))
+        iy1 = max(0, int(round(uy1)))
+        ix2 = min(ctx.width, int(round(ux2)))
+        iy2 = min(ctx.height, int(round(uy2)))
+        sam_area = max(int(np.count_nonzero(clean_mask)), 1)
+        inside_area = (
+            int(np.count_nonzero(clean_mask[iy1:iy2, ix1:ix2]))
+            if (ix2 > ix1 and iy2 > iy1)
+            else 0
         )
-        findings.append(
-            ctx.make_finding(
-                rule_id="GEOM_BOX_CLIPPED",
-                severity="warning",
-                category="geometry",
-                title="Box Clips Object Boundary",
-                message=f"{label} cuts off ~{(1.0 - recall) * 100:.0f}% of object pixels ({max_protrusion:.0f}px protrusion outside box).",
-                figure_ids=[fig.figure_id],
-                outside_viewport=nf.outside_viewport,
-                focus_rect=merged_rect,
-                confidence=0.86,
-                fingerprint=f"GEOM_BOX_CLIPPED:{fig.figure_id}",
-                suggested_fixes=[
-                    QuickFixAction(
-                        action_id=f"fix_focus_clip_{fig.figure_id}",
-                        label=f"Inspect Clipped {label}",
-                        action_type="focus_viewport",
-                        target_figure_ids=[fig.figure_id],
-                        focus_rect=merged_rect,
-                    )
-                ],
+        recall = inside_area / float(sam_area)
+        max_protrusion = max(
+            ux1 - sam_bbox[0],
+            uy1 - sam_bbox[1],
+            sam_bbox[2] - ux2,
+            sam_bbox[3] - uy2,
+            0.0,
+        )
+        if recall < ctx.tunables.sam_clipped_recall_min and max_protrusion > 10.0:
+            merged_rect: BoundingBoxTuple = (
+                min(ux1, sam_bbox[0]),
+                min(uy1, sam_bbox[1]),
+                max(ux2, sam_bbox[2]),
+                max(uy2, sam_bbox[3]),
             )
-        )
-
-    # 2. GEOM_BOX_LOOSE
-    iou, _, _, _ = bbox_iou_and_ios(nf.bbox, sam_bbox)
-    bw = max(ux2 - ux1, 1.0)
-    bh = max(uy2 - uy1, 1.0)
-    slack_left = max(0.0, sam_bbox[0] - ux1)
-    slack_top = max(0.0, sam_bbox[1] - uy1)
-    slack_right = max(0.0, ux2 - sam_bbox[2])
-    slack_bottom = max(0.0, uy2 - sam_bbox[3])
-    thresh_x = max(ctx.tunables.sam_loose_slack_px, 0.07 * bw)
-    thresh_y = max(ctx.tunables.sam_loose_slack_px, 0.07 * bh)
-    loose_sides = []
-    if slack_left > thresh_x:
-        loose_sides.append(f"left (~{slack_left:.0f}px)")
-    if slack_right > thresh_x:
-        loose_sides.append(f"right (~{slack_right:.0f}px)")
-    if slack_top > thresh_y:
-        loose_sides.append(f"top (~{slack_top:.0f}px)")
-    if slack_bottom > thresh_y:
-        loose_sides.append(f"bottom (~{slack_bottom:.0f}px)")
-
-    if iou < ctx.profile.geometry_rules.min_box_iou_tightness or loose_sides:
-        side_note = f" on {', '.join(loose_sides)}" if loose_sides else ""
-        findings.append(
-            ctx.make_finding(
-                rule_id="GEOM_BOX_LOOSE",
-                severity="warning",
-                category="geometry",
-                title="Loose Bounding Box Margin",
-                message=f"{label} appears loose (IoU {iou * 100:.0f}% vs SAM tightness threshold {ctx.profile.geometry_rules.min_box_iou_tightness * 100:.0f}%){side_note}.",
-                figure_ids=[fig.figure_id],
-                outside_viewport=nf.outside_viewport,
-                focus_rect=nf.bbox,
-                confidence=0.85,
-                fingerprint=f"GEOM_BOX_LOOSE:{fig.figure_id}",
-                suggested_fixes=[
-                    QuickFixAction(
-                        action_id=f"fix_inspect_loose_{fig.figure_id}",
-                        label=f"Tighten {label}",
-                        action_type="inspect_figure",
-                        target_figure_ids=[fig.figure_id],
-                        focus_rect=nf.bbox,
-                    )
-                ],
+            findings.append(
+                ctx.make_finding(
+                    rule_id="GEOM_BOX_CLIPPED",
+                    severity="warning",
+                    category="geometry",
+                    title="Box Clips Object Boundary",
+                    message=f"{label} cuts off ~{(1.0 - recall) * 100:.0f}% of object pixels ({max_protrusion:.0f}px protrusion outside box).",
+                    figure_ids=[fig.figure_id],
+                    outside_viewport=nf.outside_viewport,
+                    focus_rect=merged_rect,
+                    confidence=0.86,
+                    fingerprint=f"GEOM_BOX_CLIPPED:{fig.figure_id}",
+                    suggested_fixes=[
+                        QuickFixAction(
+                            action_id=f"fix_focus_clip_{fig.figure_id}",
+                            label=f"Inspect Clipped {label}",
+                            action_type="focus_viewport",
+                            target_figure_ids=[fig.figure_id],
+                            focus_rect=merged_rect,
+                        )
+                    ],
+                )
             )
-        )
+
+        # 2. GEOM_BOX_LOOSE
+        iou, _, _, _ = bbox_iou_and_ios(nf.bbox, sam_bbox)
+        bw = max(ux2 - ux1, 1.0)
+        bh = max(uy2 - uy1, 1.0)
+        slack_left = max(0.0, sam_bbox[0] - ux1)
+        slack_top = max(0.0, sam_bbox[1] - uy1)
+        slack_right = max(0.0, ux2 - sam_bbox[2])
+        slack_bottom = max(0.0, uy2 - sam_bbox[3])
+        thresh_x = max(ctx.tunables.sam_loose_slack_px, 0.07 * bw)
+        thresh_y = max(ctx.tunables.sam_loose_slack_px, 0.07 * bh)
+        loose_sides = []
+        if slack_left > thresh_x:
+            loose_sides.append(f"left (~{slack_left:.0f}px)")
+        if slack_right > thresh_x:
+            loose_sides.append(f"right (~{slack_right:.0f}px)")
+        if slack_top > thresh_y:
+            loose_sides.append(f"top (~{slack_top:.0f}px)")
+        if slack_bottom > thresh_y:
+            loose_sides.append(f"bottom (~{slack_bottom:.0f}px)")
+
+        if iou < ctx.profile.geometry_rules.min_box_iou_tightness or loose_sides:
+            side_note = f" on {', '.join(loose_sides)}" if loose_sides else ""
+            findings.append(
+                ctx.make_finding(
+                    rule_id="GEOM_BOX_LOOSE",
+                    severity="warning",
+                    category="geometry",
+                    title="Loose Bounding Box Margin",
+                    message=f"{label} appears loose (IoU {iou * 100:.0f}% vs SAM tightness threshold {ctx.profile.geometry_rules.min_box_iou_tightness * 100:.0f}%){side_note}.",
+                    figure_ids=[fig.figure_id],
+                    outside_viewport=nf.outside_viewport,
+                    focus_rect=nf.bbox,
+                    confidence=0.85,
+                    fingerprint=f"GEOM_BOX_LOOSE:{fig.figure_id}",
+                    suggested_fixes=[
+                        QuickFixAction(
+                            action_id=f"fix_inspect_loose_{fig.figure_id}",
+                            label=f"Tighten {label}",
+                            action_type="inspect_figure",
+                            target_figure_ids=[fig.figure_id],
+                            focus_rect=nf.bbox,
+                        )
+                    ],
+                )
+            )
 
     # 3. GEOM_MASK_BOUNDARY_DRIFT for polygon / bitmap
     if fig.geometry_type in {"polygon", "bitmap"}:
@@ -167,24 +168,85 @@ def evaluate_sam_mask_against_figure(
         if user_mask is not None:
             inter = int(np.count_nonzero(user_mask & clean_mask))
             union = int(np.count_nonzero(user_mask | clean_mask))
+            sam_area = max(int(np.count_nonzero(clean_mask)), 1)
+            user_area = max(int(np.count_nonzero(user_mask)), 1)
             mask_iou = inter / max(union, 1)
-            if mask_iou < ctx.profile.geometry_rules.min_box_iou_tightness:
+            mask_recall = inter / float(sam_area)
+            mask_precision = inter / float(user_area)
+            if mask_iou < ctx.profile.geometry_rules.min_box_iou_tightness or (
+                mask_recall < ctx.tunables.sam_clipped_recall_min and mask_iou < 0.85
+            ):
+                shape_word = "Brush mask" if fig.geometry_type == "bitmap" else "Polygon"
+                focus_rect: BoundingBoxTuple = (
+                    min(ux1, sam_bbox[0]),
+                    min(uy1, sam_bbox[1]),
+                    max(ux2, sam_bbox[2]),
+                    max(uy2, sam_bbox[3]),
+                )
                 findings.append(
                     ctx.make_finding(
                         rule_id="GEOM_MASK_BOUNDARY_DRIFT",
                         severity="warning",
                         category="geometry",
                         title="Mask / Polygon Boundary Drift",
-                        message=f"{label} boundary IoU ({mask_iou * 100:.0f}%) drifts from SAM foreground contour.",
+                        message=(
+                            f"{label} {shape_word} drifts from SAM segmentation "
+                            f"(Mask IoU {mask_iou * 100:.0f}%, coverage {mask_recall * 100:.0f}%, precision {mask_precision * 100:.0f}%)."
+                        ),
                         figure_ids=[fig.figure_id],
                         outside_viewport=nf.outside_viewport,
-                        focus_rect=nf.bbox,
+                        focus_rect=focus_rect,
                         confidence=0.82,
                         fingerprint=f"GEOM_MASK_BOUNDARY_DRIFT:{fig.figure_id}",
+                        suggested_fixes=[
+                            QuickFixAction(
+                                action_id=f"fix_inspect_mask_{fig.figure_id}",
+                                label=f"Inspect {label}",
+                                action_type="inspect_figure",
+                                target_figure_ids=[fig.figure_id],
+                                focus_rect=focus_rect,
+                            )
+                        ],
                     )
                 )
 
     return findings
+
+
+def extract_mask_contours_as_polygons(
+    mask: np.ndarray,
+    *,
+    max_rings: int = 3,
+    max_points: int = 48,
+    min_area_px: float = 24.0,
+) -> list[list[tuple[float, float]]]:
+    """Convert a binary segmentation mask into simplified exterior polygon rings."""
+    if mask is None or mask.size == 0 or not np.any(mask):
+        return []
+    u8 = mask.astype(np.uint8) * 255
+    contours, _ = cv2.findContours(u8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return []
+    ranked: list[tuple[float, np.ndarray]] = []
+    for cnt in contours:
+        area = float(cv2.contourArea(cnt))
+        if area < min_area_px or len(cnt) < 3:
+            continue
+        ranked.append((area, cnt))
+    ranked.sort(key=lambda item: item[0], reverse=True)
+
+    rings: list[list[tuple[float, float]]] = []
+    for _, cnt in ranked[:max_rings]:
+        perim = float(cv2.arcLength(cnt, True))
+        eps = max(1.5, 0.008 * perim)
+        approx = cv2.approxPolyDP(cnt, eps, True)
+        pts = approx.reshape(-1, 2)
+        if len(pts) > max_points:
+            step = max(1, len(pts) // max_points)
+            pts = pts[::step]
+        if len(pts) >= 3:
+            rings.append([(float(x), float(y)) for x, y in pts])
+    return rings
 
 
 def _rasterize_user_figure(ctx: RuleContext, nf: NormalizedFigure) -> np.ndarray | None:
@@ -236,7 +298,12 @@ class TightnessAuditor:
         target_figs = [
             nf
             for nf in ctx.normalized_figures
-            if nf.figure.geometry_type in {"rectangle", "polygon", "bitmap"} and nf.bbox_area > 0.0
+            if nf.figure.geometry_type in {"rectangle", "polygon", "bitmap"}
+            and nf.bbox_area > 0.0
+            and (
+                nf.figure.geometry_type != "bitmap"
+                or (nf.decoded_bitmap is not None and nf.decoded_bitmap.mask is not None)
+            )
         ]
         if not target_figs:
             return [], None
@@ -249,10 +316,20 @@ class TightnessAuditor:
                 model = SAM(str(weight_path))
                 self.model_manager.register_model("sam2.1_t", model, heavy=True)
 
-            prompts = [
-                list(expand_prompt_bbox(nf.bbox, ctx.width, ctx.height))
-                for nf in target_figs
-            ]
+            rgb_h, rgb_w = rgb.shape[:2]
+            sx = ctx.width / float(max(rgb_w, 1))
+            sy = ctx.height / float(max(rgb_h, 1))
+            prompts = []
+            for nf in target_figs:
+                px1, py1, px2, py2 = expand_prompt_bbox(nf.bbox, ctx.width, ctx.height)
+                prompts.append(
+                    [
+                        max(0.0, min(float(rgb_w), px1 / sx)),
+                        max(0.0, min(float(rgb_h), py1 / sy)),
+                        max(0.0, min(float(rgb_w), px2 / sx)),
+                        max(0.0, min(float(rgb_h), py2 / sy)),
+                    ]
+                )
             results = model.predict(
                 source=rgb,
                 bboxes=prompts,
@@ -273,6 +350,63 @@ class TightnessAuditor:
                     )
                     findings.extend(evaluate_sam_mask_against_figure(ctx, nf, m_resized > 0.5))
             return findings, "sam2.1-hiera-tiny"
+        except Exception:
+            return [], None
+        finally:
+            self.model_manager.unload_model("sam2.1_t")
+
+    def segment_bboxes_to_polygons(
+        self,
+        ctx: RuleContext,
+        rgb: np.ndarray,
+        bboxes: list[BoundingBoxTuple],
+        device: str,
+    ) -> tuple[list[list[list[tuple[float, float]]]], str | None]:
+        """Run batched SAM 2.1 box prompts to generate contour polygons for Brush/Polygon guides."""
+        if not bboxes:
+            return [], None
+        weight_path = self.model_manager.has_weight_file("sam2.1_t.pt")
+        if weight_path is None:
+            return [], None
+
+        try:
+            from ultralytics import SAM  # noqa: PLC0415
+
+            model = self.model_manager.get_model("sam2.1_t")
+            if model is None:
+                model = SAM(str(weight_path))
+                self.model_manager.register_model("sam2.1_t", model, heavy=True)
+
+            rgb_h, rgb_w = rgb.shape[:2]
+            sx = ctx.width / float(max(rgb_w, 1))
+            sy = ctx.height / float(max(rgb_h, 1))
+            prompts = [
+                [
+                    max(0.0, min(float(rgb_w), b[0] / sx)),
+                    max(0.0, min(float(rgb_h), b[1] / sy)),
+                    max(0.0, min(float(rgb_w), b[2] / sx)),
+                    max(0.0, min(float(rgb_h), b[3] / sy)),
+                ]
+                for b in bboxes
+            ]
+            results = model.predict(
+                source=rgb,
+                bboxes=prompts,
+                device=device,
+                half=(device == "mps"),
+                verbose=False,
+            )
+            out_polys: list[list[list[tuple[float, float]]]] = [[] for _ in bboxes]
+            if results and getattr(results[0], "masks", None) is not None:
+                masks_data = results[0].masks.data.detach().cpu().numpy()
+                for idx in range(min(len(bboxes), len(masks_data))):
+                    m_resized = cv2.resize(
+                        masks_data[idx].astype(np.float32),
+                        (ctx.width, ctx.height),
+                        interpolation=cv2.INTER_NEAREST,
+                    )
+                    out_polys[idx] = extract_mask_contours_as_polygons(m_resized > 0.5)
+            return out_polys, "sam2.1-hiera-tiny"
         except Exception:
             return [], None
         finally:

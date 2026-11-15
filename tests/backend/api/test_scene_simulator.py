@@ -234,6 +234,48 @@ def test_border_truncated_detection_marks_visibility_status(
     plan, _ = SceneSimulator().simulate(ctx, candidates, scorer, depth_map=None)
     assert plan.total_target_objects == 1
     assert plan.candidates[0].visibility_status == "border_truncated"
+    assert [t.tag_name for t in plan.candidates[0].recommended_object_tags] == ["Truncation"]
+    assert plan.class_summaries[0].tag_counts.get("Truncation") == 1
+
+
+def test_combined_occluded_and_edge_truncated_candidate_recommends_both_tags_at_high_res(
+    default_profile: RuleProfile,
+    test_settings,
+) -> None:
+    req = _build_horse_ontology_request(figures=[], active_class_title="Horse")
+    ctx = RuleContext.build(req, default_profile, test_settings.tunables)
+    rgb = np.full((2160, 3840, 3), 100, dtype=np.uint8)
+    for x1, y1, x2, y2 in ((8, 920, 480, 1520), (220, 880, 760, 1780)):
+        yy, xx = np.indices((y2 - y1, x2 - x1))
+        patch = np.zeros((y2 - y1, x2 - x1, 3), dtype=np.uint8)
+        patch[((xx // 5) + (yy // 5)) % 2 == 0] = 240
+        rgb[y1:y2, x1:x2] = patch
+    scorer = BokehScorer(rgb)
+
+    candidates = [
+        # #1 is occluded behind #2 AND stops 8px from left edge (<= 0.005 * 2160 = 10.8px on 4K)
+        DetectionCandidate(
+            class_title="Horse",
+            bbox=(8.0, 920.0, 480.0, 1520.0),
+            confidence=0.91,
+            detector_model="yolo11s",
+            raw_label="horse",
+        ),
+        DetectionCandidate(
+            class_title="Horse",
+            bbox=(220.0, 880.0, 760.0, 1780.0),
+            confidence=0.95,
+            detector_model="yolo11s",
+            raw_label="horse",
+        ),
+    ]
+    plan, _ = SceneSimulator().simulate(ctx, candidates, scorer, depth_map=None)
+    by_idx = {c.sim_index: c for c in plan.candidates}
+    assert by_idx[1].visibility_status == "occluded"
+    assert [t.tag_name for t in by_idx[1].recommended_object_tags] == ["Occlusion", "Truncation"]
+    assert by_idx[2].recommended_object_tags == []
+    assert plan.class_summaries[0].tag_counts == {"Occlusion": 1, "Truncation": 1}
+    assert plan.class_summaries[0].border_truncated_count == 1
 
 
 def test_unknown_class_figure_matches_at_high_iou_while_wrong_class_is_rejected(

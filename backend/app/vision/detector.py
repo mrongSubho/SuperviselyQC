@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import numpy as np
 
 from app.rules.context import RuleContext
+from app.schemas.qc import GeometryType
 from app.vision.model_manager import ModelManager
 from app.vision.tiling import (
     DetectionCandidate,
@@ -13,12 +15,17 @@ from app.vision.tiling import (
     prepare_letterbox,
 )
 
+_ONTOLOGY_TOOL_SUFFIX_RE = re.compile(
+    r"(?:[_\-\s]+)(b|brush|bitmap|mask|p|poly|polygon|seg|l|line|polyline|k|kp|kpt|keypoint|keypoints|pose|graph|r|rect|rectangle|box|bbox)$",
+    re.IGNORECASE,
+)
+
 # Canonical alias mapping from COCO / YOLO labels to common Quantigo ontology titles
 _COCO_TO_ONTOLOGY_ALIASES: dict[str, tuple[str, ...]] = {
     "person": ("Human", "Person", "Pedestrian"),
     "car": ("Car", "Car1", "Vehicle", "Automobile"),
     "bus": ("Bus",),
-    "truck": ("Truck", "Car"),
+    "truck": ("Truck",),
     "bicycle": ("Bicycle", "Bike"),
     "motorcycle": ("Motorcycle", "Motorbike"),
     "boat": ("Boat", "Ship"),
@@ -30,15 +37,60 @@ _COCO_TO_ONTOLOGY_ALIASES: dict[str, tuple[str, ...]] = {
     "horse": ("Horse", "Animal"),
     "sheep": ("Animal",),
     "cow": ("Animal",),
-    "apple": ("Fruit",),
-    "orange": ("Fruit",),
-    "banana": ("Fruit",),
+    "apple": ("Apple", "Fruit"),
+    "orange": ("Orange", "Fruit"),
+    "banana": ("Banana", "Fruit"),
+    "cookie": ("Biscuit", "Cookie"),
+    "biscuit": ("Biscuit", "Cookie"),
 }
+
+
+def strip_ontology_tool_suffix(title: str) -> str:
+    """Strip trailing delimited tool suffixes like _B, _P, _L, _K for semantic matching."""
+    cleaned = title.strip()
+    match = _ONTOLOGY_TOOL_SUFFIX_RE.search(cleaned)
+    if match:
+        stem = cleaned[: match.start()].strip(" _-")
+        if stem:
+            return stem
+    return cleaned
+
+
+def infer_shape_from_ontology_title(title: str) -> GeometryType | None:
+    """Infer expected annotation primitive from naming convention suffixes (_B, _P, _L, _K)."""
+    match = _ONTOLOGY_TOOL_SUFFIX_RE.search(title.strip())
+    if not match:
+        return None
+    token = match.group(1).lower()
+    if token in {"b", "brush", "bitmap", "mask"}:
+        return "bitmap"
+    if token in {"p", "poly", "polygon", "seg"}:
+        return "polygon"
+    if token in {"l", "line", "polyline"}:
+        return "polyline"
+    if token in {"k", "kp", "kpt", "keypoint", "keypoints", "pose", "graph"}:
+        return "graph"
+    if token in {"r", "rect", "rectangle", "box", "bbox"}:
+        return "rectangle"
+    return None
+
+
+def _normalize_label_variants(label: str) -> list[str]:
+    norm = re.sub(r"\s+", " ", label.strip().lower().replace("_", " ").replace("-", " ")).strip()
+    if not norm:
+        return []
+    variants = [norm]
+    if norm.endswith("s") and len(norm) > 3 and not norm.endswith("ss"):
+        variants.append(norm[:-1])
+    elif not norm.endswith("s"):
+        variants.append(f"{norm}s")
+    return variants
 
 
 def map_detector_label_to_ontology(
     raw_label: str,
     allowed_ontology_titles: list[str],
+    custom_aliases: dict[str, list[str]] | None = None,
 ) -> str | None:
     """Map detector class label to an active Supervisely ontology class title."""
     norm = raw_label.strip().lower()
@@ -46,9 +98,34 @@ def map_detector_label_to_ontology(
     if norm in lower_map:
         return lower_map[norm]
 
+    stem_map: dict[str, str] = {}
+    for title in allowed_ontology_titles:
+        stem = strip_ontology_tool_suffix(title).lower()
+        for variant in _normalize_label_variants(stem):
+            stem_map.setdefault(variant, title)
+
+    for variant in _normalize_label_variants(norm):
+        if variant in lower_map:
+            return lower_map[variant]
+        if variant in stem_map:
+            return stem_map[variant]
+
+    if custom_aliases:
+        for key, candidates in custom_aliases.items():
+            if key.strip().lower() == norm:
+                for candidate in candidates:
+                    c_low = candidate.lower()
+                    if c_low in lower_map:
+                        return lower_map[c_low]
+                    if c_low in stem_map:
+                        return stem_map[c_low]
+
     for candidate in _COCO_TO_ONTOLOGY_ALIASES.get(norm, ()):
-        if candidate.lower() in lower_map:
-            return lower_map[candidate.lower()]
+        c_low = candidate.lower()
+        if c_low in lower_map:
+            return lower_map[c_low]
+        if c_low in stem_map:
+            return stem_map[c_low]
 
     return None
 
@@ -135,7 +212,9 @@ class ObjectDetector:
 
         def _resolve_label(raw_label: str) -> str | None:
             if ontology_titles:
-                return map_detector_label_to_ontology(raw_label, ontology_titles)
+                return map_detector_label_to_ontology(
+                    raw_label, ontology_titles, ctx.profile.detector_aliases
+                )
             clean = raw_label.strip()
             if not clean:
                 return None
@@ -207,19 +286,39 @@ class ObjectDetector:
                     )
                 )
 
-        # Optional Deep open-vocab detector for non-COCO classes (e.g. Fruit, Building, custom)
+        # Optional Deep open-vocab detector for non-COCO classes (e.g. Biscuit_B, Fruit, custom)
         if use_open_vocab and ontology_titles:
             ov_name = "yolov8s-worldv2"
             ov_model = self._load_yolo(ov_name, heavy=True)
             if ov_model is not None:
                 try:
-                    ov_model.set_classes(ontology_titles)
+                    prompt_to_ontology: dict[str, str] = {}
+                    ov_prompts: list[str] = []
+                    seen_prompts: set[str] = set()
+                    for title in ontology_titles:
+                        stem = strip_ontology_tool_suffix(title).replace("_", " ").replace("-", " ").strip()
+                        prompt = (stem or title).lower()
+                        if prompt not in seen_prompts:
+                            seen_prompts.add(prompt)
+                            ov_prompts.append(prompt)
+                            prompt_to_ontology[prompt] = title
+                        # Add close baked-good synonym so CLIP matches biscuit/cookie reliably
+                        if prompt == "biscuit" and "cookie" not in seen_prompts and not any(
+                            strip_ontology_tool_suffix(t).lower() == "cookie" for t in ontology_titles
+                        ):
+                            seen_prompts.add("cookie")
+                            ov_prompts.append("cookie")
+                            prompt_to_ontology["cookie"] = title
+
+                    ov_model.set_classes(ov_prompts or ontology_titles)
                     raw_ov = _run_ultralytics_on_crop(
                         ov_model, img_1280, active_device, base_conf, imgsz=1280
                     )
                     models_used.append(ov_name)
                     for raw_label, score, (x1, y1, x2, y2) in raw_ov:
-                        mapped = _resolve_label(raw_label)
+                        mapped = prompt_to_ontology.get(raw_label.strip().lower()) or _resolve_label(
+                            raw_label
+                        )
                         if not mapped:
                             continue
                         pass1_dets.append(

@@ -19,9 +19,24 @@ class SharpnessMetrics:
 class BokehScorer:
     """Native 1:1 resolution boundary-Tenengrad + top-50% Laplacian bokeh scorer."""
 
-    def __init__(self, rgb: np.ndarray) -> None:
+    def __init__(
+        self,
+        rgb: np.ndarray,
+        coord_width: float | None = None,
+        coord_height: float | None = None,
+    ) -> None:
         self.rgb = rgb
         self.height, self.width = rgb.shape[:2]
+        self._coord_scale_x = (
+            float(self.width) / float(coord_width)
+            if coord_width and coord_width > 0 and int(coord_width) != self.width
+            else 1.0
+        )
+        self._coord_scale_y = (
+            float(self.height) / float(coord_height)
+            if coord_height and coord_height > 0 and int(coord_height) != self.height
+            else 1.0
+        )
         self._ref_score: float | None = None
 
     @staticmethod
@@ -64,10 +79,12 @@ class BokehScorer:
         return float(sum(tile_vars[:top_k]) / top_k)
 
     def _raw_score_for_roi(self, bbox: BoundingBoxTuple) -> tuple[float, float, float]:
-        bx1 = max(0, min(self.width - 1, int(round(bbox[0]))))
-        by1 = max(0, min(self.height - 1, int(round(bbox[1]))))
-        bx2 = max(bx1 + 1, min(self.width, int(round(bbox[2]))))
-        by2 = max(by1 + 1, min(self.height, int(round(bbox[3]))))
+        sx = self._coord_scale_x
+        sy = self._coord_scale_y
+        bx1 = max(0, min(self.width - 1, int(round(bbox[0] * sx))))
+        by1 = max(0, min(self.height - 1, int(round(bbox[1] * sy))))
+        bx2 = max(bx1 + 1, min(self.width, int(round(bbox[2] * sx))))
+        by2 = max(by1 + 1, min(self.height, int(round(bbox[3] * sy))))
         rw = bx2 - bx1
         rh = by2 - by1
 

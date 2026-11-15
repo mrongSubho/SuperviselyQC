@@ -22,7 +22,6 @@ export default defineConfig({
     sourcemap: false,
     rollupOptions: {
       input: {
-        popup: path.resolve(extRoot, "src/popup/index.html"),
         options: path.resolve(extRoot, "src/options/index.html"),
       },
     },

@@ -67,3 +67,100 @@ def test_near_miss_border_gap_and_inverted_corners(default_profile: RuleProfile)
     assert "BBOX_BORDER_TRUNCATION" in rules
     assert rules["BBOX_BORDER_TRUNCATION"].severity == "warning"
     assert "7px" in rules["BBOX_BORDER_TRUNCATION"].message
+
+
+def test_border_touching_figure_requires_truncation_tag(default_profile: RuleProfile) -> None:
+    req = make_analyze_request(
+        width=1000,
+        height=800,
+        figures=[
+            {
+                "figureId": "fig_edge_untagged",
+                "classId": 101,
+                "classTitle": "Human",
+                "geometryType": "rectangle",
+                "points": {"exterior": [[0, 100], [180, 400]], "interior": []},
+                "tags": [],
+                "labelIndex": 1,
+            },
+            {
+                "figureId": "fig_edge_tagged",
+                "classId": 101,
+                "classTitle": "Human",
+                "geometryType": "rectangle",
+                "points": {"exterior": [[820, 100], [1000, 400]], "interior": []},
+                "tags": [{"tagId": 502, "name": "Truncation", "value": None}],
+                "labelIndex": 2,
+            },
+        ],
+    )
+    req.ontology.tags.append(
+        type(req.ontology.tags[0])(
+            tag_id=502,
+            name="Truncation",
+            value_type="none",
+            applicable_type="objectsOnly",
+            classes=[],
+            values=[],
+        )
+    )
+    ctx = RuleContext.build(req, default_profile, EngineSettings().tunables)
+    findings = evaluate_bbox_rules(ctx)
+    trunc_findings = [f for f in findings if f.rule_id == "BBOX_TRUNCATION_MISSING_TAG"]
+    assert len(trunc_findings) == 1
+    assert trunc_findings[0].figure_ids == ["fig_edge_untagged"]
+    assert trunc_findings[0].suggested_fixes[0].tag_name == "Truncation"
+
+
+def test_truncation_profile_fallback_and_interior_false_positive(
+    default_profile: RuleProfile,
+) -> None:
+    # default.yaml includes Truncation in objectOnlyTags:
+    # 1) Edge box with no tag -> BBOX_TRUNCATION_MISSING_TAG suggesting 'Truncation'
+    # 2) Edge box carrying Occlusion (when ontology omits Truncation) -> respected without duplicate warning
+    # 3) Interior box wrongly carrying Truncated -> BBOX_TRUNCATION_FP with remove_object_tag
+    req = make_analyze_request(
+        width=1000,
+        height=800,
+        figures=[
+            {
+                "figureId": "fig_edge_none",
+                "classId": 101,
+                "classTitle": "Human",
+                "geometryType": "rectangle",
+                "points": {"exterior": [[0, 120], [160, 420]], "interior": []},
+                "tags": [],
+                "labelIndex": 1,
+            },
+            {
+                "figureId": "fig_edge_occ_fallback",
+                "classId": 101,
+                "classTitle": "Human",
+                "geometryType": "rectangle",
+                "points": {"exterior": [[840, 120], [1000, 420]], "interior": []},
+                "tags": [{"tagId": 501, "name": "Occlusion", "value": None}],
+                "labelIndex": 2,
+            },
+            {
+                "figureId": "fig_interior_fp",
+                "classId": 101,
+                "classTitle": "Human",
+                "geometryType": "rectangle",
+                "points": {"exterior": [[300, 200], [480, 520]], "interior": []},
+                "tags": [{"tagId": 502, "name": "Truncated", "value": None}],
+                "labelIndex": 3,
+            },
+        ],
+    )
+    ctx = RuleContext.build(req, default_profile, EngineSettings().tunables)
+    findings = evaluate_bbox_rules(ctx)
+
+    missing = [f for f in findings if f.rule_id == "BBOX_TRUNCATION_MISSING_TAG"]
+    assert [f.figure_ids for f in missing] == [["fig_edge_none"]]
+    assert missing[0].suggested_fixes[0].tag_name == "Truncation"
+
+    fps = [f for f in findings if f.rule_id == "BBOX_TRUNCATION_FP"]
+    assert len(fps) == 1
+    assert fps[0].figure_ids == ["fig_interior_fp"]
+    assert fps[0].suggested_fixes[0].action_type == "remove_object_tag"
+    assert fps[0].suggested_fixes[0].tag_name == "Truncated"

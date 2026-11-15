@@ -54,7 +54,7 @@ class EngineSettings(BaseSettings):
     bridge_token: str | None = None
 
     allowed_extension_ids: list[str] = Field(default_factory=list)
-    allow_unpacked_extensions: bool = True
+    allow_unpacked_extensions: bool = False
 
     max_disk_cache_bytes: int = 1_073_741_824  # 1 GiB
     disk_cache_ttl_seconds: int = 86_400  # 24 hours

@@ -11,6 +11,8 @@ from app.config import EngineSettings
 from app.schemas.qc import ProfileListResponse, RuleProfile
 
 _SAFE_PROFILE_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
+_NESTED_QUANTIFIER_RE = re.compile(r"\([^)]*[+*][^)]*\)[+*{]")
+_MAX_TITLE_REGEX_LEN = 256
 
 
 class ProfileNotFoundError(Exception):
@@ -92,10 +94,10 @@ class ProfileStore:
         if job_title:
             for p in profiles:
                 pattern = p.matchers.job_title_regex
-                if not pattern:
+                if not pattern or len(pattern) > _MAX_TITLE_REGEX_LEN or _NESTED_QUANTIFIER_RE.search(pattern):
                     continue
                 try:
-                    if re.search(pattern, job_title, re.IGNORECASE):
+                    if re.search(pattern, job_title[:512], re.IGNORECASE):
                         return p.profile_id
                 except re.error:
                     continue
@@ -149,8 +151,15 @@ class ProfileStore:
                 422,
             )
         if profile.matchers.job_title_regex:
+            regex_str = profile.matchers.job_title_regex
+            if len(regex_str) > _MAX_TITLE_REGEX_LEN or _NESTED_QUANTIFIER_RE.search(regex_str):
+                raise ProfileStoreError(
+                    "INVALID_PAYLOAD",
+                    f"jobTitleRegex exceeds {_MAX_TITLE_REGEX_LEN} chars or contains unsafe nested quantifiers",
+                    422,
+                )
             try:
-                re.compile(profile.matchers.job_title_regex)
+                re.compile(regex_str)
             except re.error as exc:
                 raise ProfileStoreError(
                     "INVALID_PAYLOAD", f"Invalid jobTitleRegex: {exc}", 422

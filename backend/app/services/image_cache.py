@@ -51,6 +51,9 @@ class ImageCacheService:
         self._lock = threading.RLock()
         self._ram: OrderedDict[str, _RamCacheEntry] = OrderedDict()
         self._ram_bytes = 0
+        self._disk_index: OrderedDict[str, tuple[int, float, float]] = OrderedDict()
+        self._disk_bytes = 0
+        self._load_disk_index()
 
     @staticmethod
     def _cache_key(image_id: str, image_hash: str) -> str:
@@ -84,9 +87,31 @@ class ImageCacheService:
         tmp.write_text(json.dumps(meta), encoding="utf-8")
         os.replace(tmp, meta_path)
 
+    def _load_disk_index(self) -> None:
+        now = time.time()
+        loaded: list[tuple[str, int, float, float]] = []
+        for meta_path in self.cache_dir.glob("*.meta.json"):
+            key = meta_path.name[: -len(".meta.json")]
+            bin_path = self._bin_path(key)
+            meta = self._read_meta(meta_path)
+            if meta is None or not bin_path.exists() or self._is_expired(meta, now):
+                self._delete_disk_entry(key)
+                continue
+            size = bin_path.stat().st_size
+            stored_at = float(meta.get("storedAt", now))
+            last_access = float(meta.get("lastAccessAt", stored_at))
+            loaded.append((key, size, stored_at, last_access))
+        loaded.sort(key=lambda item: item[3])
+        for key, size, stored_at, last_access in loaded:
+            self._disk_index[key] = (size, stored_at, last_access)
+            self._disk_bytes += size
+
     def _delete_disk_entry(self, key: str) -> None:
         self._bin_path(key).unlink(missing_ok=True)
         self._meta_path(key).unlink(missing_ok=True)
+        removed = self._disk_index.pop(key, None)
+        if removed is not None:
+            self._disk_bytes = max(0, self._disk_bytes - removed[0])
         self._evict_ram_key(key)
 
     def _evict_ram_key(self, key: str) -> None:
@@ -96,30 +121,15 @@ class ImageCacheService:
 
     def _evict_disk_if_needed(self) -> None:
         now = time.time()
-        entries: list[tuple[str, float, int]] = []
-        total_bytes = 0
-
-        for meta_path in self.cache_dir.glob("*.meta.json"):
-            key = meta_path.name[: -len(".meta.json")]
-            bin_path = self._bin_path(key)
-            meta = self._read_meta(meta_path)
-            if meta is None or not bin_path.exists() or self._is_expired(meta, now):
+        ttl = self.settings.disk_cache_ttl_seconds
+        for key in list(self._disk_index.keys()):
+            _, stored_at, _ = self._disk_index[key]
+            if (now - stored_at) > ttl:
                 self._delete_disk_entry(key)
-                continue
-            size = bin_path.stat().st_size
-            last_access = float(meta.get("lastAccessAt", meta.get("storedAt", 0.0)))
-            entries.append((key, last_access, size))
-            total_bytes += size
 
-        if total_bytes <= self.settings.max_disk_cache_bytes:
-            return
-
-        entries.sort(key=lambda item: item[1])
-        for key, _, size in entries:
-            if total_bytes <= self.settings.max_disk_cache_bytes:
-                break
-            self._delete_disk_entry(key)
-            total_bytes -= size
+        while self._disk_bytes > self.settings.max_disk_cache_bytes and self._disk_index:
+            oldest_key = next(iter(self._disk_index))
+            self._delete_disk_entry(oldest_key)
 
     def head(
         self,
@@ -145,8 +155,14 @@ class ImageCacheService:
                 return False
             if height is not None and int(meta.get("height", -1)) != height:
                 return False
-            meta["lastAccessAt"] = now
-            self._write_meta(meta_path, meta)
+            prev_access = float(meta.get("lastAccessAt", 0.0))
+            if key in self._disk_index:
+                size, stored_at, _ = self._disk_index[key]
+                self._disk_index[key] = (size, stored_at, now)
+                self._disk_index.move_to_end(key)
+            if (now - prev_access) >= 60.0:
+                meta["lastAccessAt"] = now
+                self._write_meta(meta_path, meta)
             return True
 
     @staticmethod
@@ -209,6 +225,11 @@ class ImageCacheService:
             tmp_bin.write_bytes(raw_bytes)
             os.replace(tmp_bin, bin_path)
             self._write_meta(self._meta_path(key), meta)
+            prev = self._disk_index.pop(key, None)
+            if prev is not None:
+                self._disk_bytes = max(0, self._disk_bytes - prev[0])
+            self._disk_index[key] = (len(raw_bytes), now, now)
+            self._disk_bytes += len(raw_bytes)
             self._store_ram_locked(key, rgb)
             self._evict_disk_if_needed()
 
@@ -248,6 +269,10 @@ class ImageCacheService:
             if self._is_expired(meta, now):
                 self._delete_disk_entry(key)
                 return None
+            if key in self._disk_index:
+                size, stored_at, _ = self._disk_index[key]
+                self._disk_index[key] = (size, stored_at, now)
+                self._disk_index.move_to_end(key)
             meta["lastAccessAt"] = now
             self._write_meta(meta_path, meta)
 

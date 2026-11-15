@@ -315,6 +315,30 @@ export function installPageBridge(
   const onDomMutationAction = () => scheduleSnapshot();
   targetWindow.addEventListener("mouseup", onDomMutationAction, { passive: true });
   targetWindow.addEventListener("keyup", onDomMutationAction, { passive: true });
+  targetWindow.addEventListener("popstate", onDomMutationAction);
+  targetWindow.addEventListener("hashchange", onDomMutationAction);
+
+  const hist = targetWindow.history;
+  const origPushState = hist?.pushState;
+  const origReplaceState = hist?.replaceState;
+  if (hist && typeof origPushState === "function") {
+    hist.pushState = function (
+      this: History,
+      ...args: Parameters<History["pushState"]>
+    ): void {
+      origPushState.apply(this, args);
+      scheduleSnapshot();
+    };
+  }
+  if (hist && typeof origReplaceState === "function") {
+    hist.replaceState = function (
+      this: History,
+      ...args: Parameters<History["replaceState"]>
+    ): void {
+      origReplaceState.apply(this, args);
+      scheduleSnapshot();
+    };
+  }
 
   // Announce readiness immediately at document_start and once DOM settles
   postToContent({
@@ -341,6 +365,14 @@ export function installPageBridge(
     targetWindow.removeEventListener("message", onMessage);
     targetWindow.removeEventListener("mouseup", onDomMutationAction);
     targetWindow.removeEventListener("keyup", onDomMutationAction);
+    targetWindow.removeEventListener("popstate", onDomMutationAction);
+    targetWindow.removeEventListener("hashchange", onDomMutationAction);
+    if (hist && typeof origPushState === "function") {
+      hist.pushState = origPushState;
+    }
+    if (hist && typeof origReplaceState === "function") {
+      hist.replaceState = origReplaceState;
+    }
     targetWindow.fetch = origFetch;
     XhrProto.open = origOpen;
     XhrProto.send = origSend;

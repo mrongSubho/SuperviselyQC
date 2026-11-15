@@ -5,6 +5,7 @@ import {
   type PendingChunkUpload,
 } from "../../../extension/src/background/imageCacheRelay";
 import {
+  extractDomObjectTags,
   extractDomOntologyClasses,
   extractDomResolutionHint,
   extractLargestDomImageElement,
@@ -791,5 +792,23 @@ describe("Page bridge replay buffer, CDN chunk relay, and ConfirmGuard", () => {
     expect(blobRes.width).toBe(3840);
     expect(blobRes.height).toBe(2160);
     expect(blobSwMsgs).not.toContain("QC_FETCH_AND_CACHE_SAME_ORIGIN_IMAGE");
+  });
+
+  it("extracts dynamic object tags (Occlusion, Truncation, Male, Female) from CURRENT OBJECT TAGS panel", () => {
+    document.body.innerHTML = `
+      <aside>
+        <div>CURRENT OBJECT ...512 TAGS</div>
+        <label><input type="checkbox" /> <span>Occlusion</span></label>
+        <label><input type="checkbox" /> <span>Truncation</span></label>
+        <label><input type="checkbox" /> <span>Male</span></label>
+        <label><input type="checkbox" /> <span>Female</span></label>
+      </aside>
+    `;
+    try {
+      const tags = extractDomObjectTags();
+      expect(tags.map((t) => t.name)).toEqual(["Occlusion", "Truncation", "Male", "Female"]);
+    } finally {
+      document.body.innerHTML = "";
+    }
   });
 });

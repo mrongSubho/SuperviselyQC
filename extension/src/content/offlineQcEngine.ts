@@ -1,3 +1,4 @@
+import ruleTunables from "@shared/schemas/rule-tunables.json";
 import {
   bboxIouAndIos,
   computeFigureBbox,
@@ -31,7 +32,7 @@ const DEFAULT_OFFLINE_PROFILE: RuleProfile = {
   },
   tagRules: {
     imageOnlyTags: [],
-    objectOnlyTags: ["Occlusion"],
+    objectOnlyTags: ["Occlusion", "Truncation", "Truncated"],
     occlusionOverlapIouThreshold: 0.1,
     occlusionCoverRatioThreshold: 0.15,
     flagForegroundOcclusionFalsePositive: true,
@@ -196,6 +197,38 @@ function samplePolyline(pts: Point2D[]): Point2D[] {
   return out;
 }
 
+function isTruncationTagName(name: string): boolean {
+  const norm = name.trim().toLowerCase();
+  return norm === "truncation" || norm === "truncated" || norm === "truncate";
+}
+
+function resolveTruncationTagName(
+  req: QCAnalyzeRequest,
+  profile: RuleProfile,
+  classTitle?: string,
+): { tagName: string | null; fromOntology: boolean } {
+  for (const tagDef of req.ontology.tags) {
+    if (!isTruncationTagName(tagDef.name)) continue;
+    if (tagDef.applicableType !== "objectsOnly" && tagDef.applicableType !== "all") {
+      return { tagName: null, fromOntology: true };
+    }
+    if (
+      classTitle &&
+      tagDef.classes.length > 0 &&
+      !tagDef.classes.some((c) => c.toLowerCase() === classTitle.toLowerCase())
+    ) {
+      return { tagName: null, fromOntology: true };
+    }
+    return { tagName: tagDef.name, fromOntology: true };
+  }
+  for (const profTag of profile.tagRules.objectOnlyTags) {
+    if (isTruncationTagName(profTag)) {
+      return { tagName: profTag, fromOntology: false };
+    }
+  }
+  return { tagName: null, fromOntology: false };
+}
+
 function parseBilateral(label: string): { side: "L" | "R"; part: string } | null {
   const norm = label.trim().toLowerCase().replace(/[\s-]+/g, "_");
   const sideM = /^(left|l)_(.+)$/.exec(norm) ?? /^(.+)_(left|l)$/.exec(norm);
@@ -219,7 +252,7 @@ export async function runOfflineDeterministicQc(
   const W = req.image.width;
   const H = req.image.height;
   const imgArea = Math.max(1, W * H);
-  const sMin = Math.min(15.0, Math.max(8.0, 0.025 * Math.min(W, H)));
+  const sMin = Math.min(ruleTunables.micro_click_min_side_px, Math.max(8.0, 0.025 * Math.min(W, H)));
   const isPartial =
     req.uiState.stateSource === "dom_fallback" || req.uiState.partialGeometry;
 
@@ -267,33 +300,33 @@ export async function runOfflineDeterministicQc(
   if (
     profile.workflowRules.warnOnEmptyImageWithoutConfirm &&
     !req.uiState.isConfirmed &&
-    !req.uiState.synchronizeDirty &&
     ((!isPartial && req.figures.length === 0) || (isPartial && domTotal === 0))
   ) {
     findings.push(
       makeFinding(W, H, {
-        ruleId: "WORKFLOW_EMPTY_IMAGE_UNCONFIRMED",
-        severity: "info",
+        ruleId: "WORKFLOW_EMPTY_UNCONFIRMED",
+        severity: "warning",
         category: "workflow",
-        title: "Empty Image Not Confirmed",
-        message: "No annotations are present and image is not marked confirmed.",
+        title: "Unconfirmed Empty Image",
+        message: "No annotated figures detected on this unconfirmed image. Add annotations or verify empty status before confirming.",
         figureIds: [],
         imageTagNames: [],
         missedObjectIds: [],
         outsideViewport: false,
         confidence: 1.0,
         suggestedFixes: [],
-        fingerprint: `WORKFLOW_EMPTY_IMAGE_UNCONFIRMED:${req.image.imageId}`,
+        fingerprint: `WORKFLOW_EMPTY_UNCONFIRMED:${req.image.imageId}`,
       }),
     );
   }
 
   // Image tags rules (run in both normal & dom_fallback)
+  const objectOnlyLower = new Set(profile.tagRules.objectOnlyTags.map((t) => t.trim().toLowerCase()));
   for (const tag of req.imageTags) {
     const tdef = tagsByName.get(tag.name);
     if (
       (tdef && tdef.applicableType === "objectsOnly") ||
-      profile.tagRules.objectOnlyTags.includes(tag.name)
+      objectOnlyLower.has(tag.name.trim().toLowerCase())
     ) {
       findings.push(
         makeFinding(W, H, {
@@ -622,8 +655,8 @@ export async function runOfflineDeterministicQc(
         if (Math.min(bw, bh) < sMin || nf.bboxArea < profile.geometryRules.minBoxAreaPx) {
           findings.push(
             makeFinding(W, H, {
-              ruleId: "GEOM_MICRO_CLICK",
-              severity: "warning",
+              ruleId: "GEOM_EXTREME_MICRO_CLICK",
+              severity: "blocker",
               category: "geometry",
               title: "Micro / Accidental Box Click",
               message: `${nf.label} (${Math.round(bw)}x${Math.round(bh)}px) is below minimum size threshold.`,
@@ -634,13 +667,13 @@ export async function runOfflineDeterministicQc(
               focusRect: nf.bbox,
               confidence: 0.92,
               suggestedFixes: [],
-              fingerprint: `GEOM_MICRO_CLICK:${fig.figureId}`,
+              fingerprint: `GEOM_EXTREME_MICRO_CLICK:${fig.figureId}`,
             }),
           );
         }
         const bgClasses = new Set(["background", "sky", "road", "building", "ground"]);
         if (
-          nf.bboxArea >= 0.9 * imgArea &&
+          nf.bboxArea >= ruleTunables.canvas_wide_area_ratio * imgArea &&
           !bgClasses.has(fig.classTitle.toLowerCase())
         ) {
           findings.push(
@@ -658,6 +691,64 @@ export async function runOfflineDeterministicQc(
               confidence: 0.9,
               suggestedFixes: [],
               fingerprint: `GEOM_CANVAS_WIDE_ACCIDENTAL:${fig.figureId}`,
+            }),
+          );
+        }
+
+        const edge = profile.geometryRules.edgeSnapMarginPx;
+        const nearMissMax = Math.max(12.0, 0.005 * Math.min(W, H));
+        const sideGaps: Array<[string, number]> = [
+          ["left", nf.bbox[0]],
+          ["top", nf.bbox[1]],
+          ["right", W - nf.bbox[2]],
+          ["bottom", H - nf.bbox[3]],
+        ];
+        const nearMisses = sideGaps.filter(([, g]) => g > edge && g <= nearMissMax);
+        const nearEdges = sideGaps.filter(([, g]) => g > 0 && g <= edge);
+        if (nearMisses.length > 0) {
+          const [side, gap] = nearMisses.sort((a, b) => a[1] - b[1])[0]!;
+          findings.push(
+            makeFinding(W, H, {
+              ruleId: "BBOX_BORDER_TRUNCATION",
+              severity: "warning",
+              category: "geometry",
+              title: "Near-Miss Image Border Gap",
+              message: `${nf.label} stops ${Math.round(gap)}px short of ${side} image boundary — snap to edge if object is truncated.`,
+              figureIds: [fig.figureId],
+              imageTagNames: [],
+              missedObjectIds: [],
+              outsideViewport: nf.outsideViewport,
+              focusRect: nf.bbox,
+              confidence: 0.88,
+              suggestedFixes: [
+                {
+                  actionId: `fix_focus_edge_${fig.figureId}`,
+                  label: `Zoom to ${nf.label}`,
+                  actionType: "focus_viewport",
+                  targetFigureIds: [fig.figureId],
+                  focusRect: nf.bbox,
+                },
+              ],
+              fingerprint: `BBOX_BORDER_TRUNCATION:${fig.figureId}:${side}`,
+            }),
+          );
+        } else if (nearEdges.length > 0) {
+          const [side, gap] = nearEdges.sort((a, b) => a[1] - b[1])[0]!;
+          findings.push(
+            makeFinding(W, H, {
+              ruleId: "BBOX_BORDER_TRUNCATION",
+              severity: "info",
+              category: "geometry",
+              title: "Box Near Image Border",
+              message: `${nf.label} is ${gap.toFixed(1)}px from ${side} image edge — verify truncation snap.`,
+              figureIds: [fig.figureId],
+              imageTagNames: [],
+              missedObjectIds: [],
+              outsideViewport: nf.outsideViewport,
+              focusRect: nf.bbox,
+              confidence: 0.78,
+              suggestedFixes: [],
+              fingerprint: `BBOX_BORDER_TRUNCATION:${fig.figureId}:${side}`,
             }),
           );
         }
@@ -703,8 +794,8 @@ export async function runOfflineDeterministicQc(
         } else if (nf.geomArea < profile.geometryRules.minBoxAreaPx) {
           findings.push(
             makeFinding(W, H, {
-              ruleId: "GEOM_MICRO_CLICK",
-              severity: "warning",
+              ruleId: "GEOM_EXTREME_MICRO_CLICK",
+              severity: "blocker",
               category: "geometry",
               title: "Micro Polygon Area",
               message: `${nf.label} polygon area (${Math.round(nf.geomArea)}px²) is too tiny.`,
@@ -715,14 +806,14 @@ export async function runOfflineDeterministicQc(
               focusRect: nf.bbox,
               confidence: 0.9,
               suggestedFixes: [],
-              fingerprint: `GEOM_MICRO_CLICK:${fig.figureId}`,
+              fingerprint: `GEOM_EXTREME_MICRO_CLICK:${fig.figureId}`,
             }),
           );
         }
         for (const hole of ints) {
           const hArea = shoelacePolygonArea(hole);
           const anyOutside = hole.length > 0 && !pointInPolygon(hole[0]!, ext);
-          if (hole.length < 3 || hArea < 16.0 || anyOutside) {
+          if (hole.length < 3 || hArea < ruleTunables.poly_micro_hole_px || anyOutside) {
             findings.push(
               makeFinding(W, H, {
                 ruleId: "POLY_INVALID_HOLE",
@@ -887,7 +978,7 @@ export async function runOfflineDeterministicQc(
         let isDup = false;
         if (a.fig.geometryType === "rectangle" || a.fig.geometryType === "polygon" || a.fig.geometryType === "bitmap") {
           const { iou } = bboxIouAndIos(a.bbox, b.bbox);
-          if (iou >= 0.9) isDup = true;
+          if (iou >= ruleTunables.duplicate_iou_threshold) isDup = true;
         } else if (a.fig.geometryType === "polyline" && b.fig.geometryType === "polyline") {
           const pa = a.fig.points?.exterior ?? [];
           const pb = b.fig.points?.exterior ?? [];
@@ -922,8 +1013,8 @@ export async function runOfflineDeterministicQc(
           const ids = [a.fig.figureId, b.fig.figureId].sort();
           findings.push(
             makeFinding(W, H, {
-              ruleId: "DUPLICATE_OBJECT",
-              severity: "warning",
+              ruleId: "GEOM_DUPLICATE_FIGURE",
+              severity: "blocker",
               category: "geometry",
               title: "Duplicate Overlapping Annotation",
               message: `${a.label} and ${b.label} nearly identically duplicate the same ${a.fig.classTitle}.`,
@@ -934,10 +1025,122 @@ export async function runOfflineDeterministicQc(
               focusRect: a.bbox,
               confidence: 0.96,
               suggestedFixes: [],
-              fingerprint: `DUPLICATE_OBJECT:${ids[0]}:${ids[1]}`,
+              fingerprint: `GEOM_DUPLICATE_FIGURE:${ids[0]}_${ids[1]}`,
             }),
           );
         }
+      }
+    }
+
+    // Frame truncation tag validation (missing tag & false positive on interior objects)
+    const truncEdge = profile.geometryRules.edgeSnapMarginPx;
+    const truncNearMissMax = Math.max(12.0, 0.005 * Math.min(W, H));
+    for (const nf of normFigs) {
+      const fig = nf.fig;
+      if (
+        fig.geometryType !== "rectangle" &&
+        fig.geometryType !== "polygon" &&
+        fig.geometryType !== "bitmap"
+      ) {
+        continue;
+      }
+      if (nf.bboxArea <= 0 || nf.bboxArea >= ruleTunables.canvas_wide_area_ratio * imgArea) {
+        continue;
+      }
+      const existingTruncTags = fig.tags
+        .filter((t) => isTruncationTagName(t.name))
+        .map((t) => t.name);
+      if (existingTruncTags.length > 0) {
+        const minGap = Math.min(
+          nf.bbox[0],
+          nf.bbox[1],
+          W - nf.bbox[2],
+          H - nf.bbox[3],
+        );
+        if (minGap > truncNearMissMax) {
+          const tagName = existingTruncTags[0]!;
+          findings.push(
+            makeFinding(W, H, {
+              ruleId: "BBOX_TRUNCATION_FP",
+              severity: "warning",
+              category: "tags",
+              title: `False-Positive ${tagName} Tag on Interior Object`,
+              message: `${nf.label} carries "${tagName}" tag, yet lies ${Math.round(minGap)}px inside the image frame.`,
+              figureIds: [fig.figureId],
+              imageTagNames: [],
+              missedObjectIds: [],
+              outsideViewport: nf.outsideViewport,
+              focusRect: nf.bbox,
+              confidence: 0.9,
+              suggestedFixes: [
+                {
+                  actionId: `fix_rm_trunc_${fig.figureId}`,
+                  label: `Remove ${tagName} from ${nf.label}`,
+                  actionType: "remove_object_tag",
+                  targetFigureIds: [fig.figureId],
+                  tagName,
+                },
+                {
+                  actionId: `fix_inspect_trunc_fp_${fig.figureId}`,
+                  label: `Inspect ${nf.label}`,
+                  actionType: "inspect_figure",
+                  targetFigureIds: [fig.figureId],
+                  focusRect: nf.bbox,
+                },
+              ],
+              fingerprint: `BBOX_TRUNCATION_FP:${fig.figureId}`,
+            }),
+          );
+        }
+        continue;
+      }
+
+      const { tagName: truncTagName, fromOntology } = resolveTruncationTagName(
+        req,
+        profile,
+        fig.classTitle,
+      );
+      if (!truncTagName) continue;
+      const hasOcc = fig.tags.some((t) => t.name.trim().toLowerCase() === "occlusion");
+      if (!fromOntology && hasOcc) continue;
+      const touchesEdge =
+        nf.bbox[0] <= truncEdge ||
+        nf.bbox[1] <= truncEdge ||
+        nf.bbox[2] >= W - truncEdge ||
+        nf.bbox[3] >= H - truncEdge;
+      if (touchesEdge) {
+        findings.push(
+          makeFinding(W, H, {
+            ruleId: "BBOX_TRUNCATION_MISSING_TAG",
+            severity: "warning",
+            category: "tags",
+            title: `Frame-Truncated Figure Missing ${truncTagName} Tag`,
+            message: `${nf.label} is cut off at the image edge — add '${truncTagName}' tag if truncated.`,
+            figureIds: [fig.figureId],
+            imageTagNames: [],
+            missedObjectIds: [],
+            outsideViewport: nf.outsideViewport,
+            focusRect: nf.bbox,
+            confidence: 0.85,
+            suggestedFixes: [
+              {
+                actionId: `fix_add_trunc_${fig.figureId}`,
+                label: `Add ${truncTagName} to ${nf.label}`,
+                actionType: "add_object_tag",
+                targetFigureIds: [fig.figureId],
+                tagName: truncTagName,
+              },
+              {
+                actionId: `fix_inspect_trunc_${fig.figureId}`,
+                label: `Inspect ${nf.label}`,
+                actionType: "inspect_figure",
+                targetFigureIds: [fig.figureId],
+                focusRect: nf.bbox,
+              },
+            ],
+            fingerprint: `BBOX_TRUNCATION_MISSING_TAG:${fig.figureId}`,
+          }),
+        );
       }
     }
   }

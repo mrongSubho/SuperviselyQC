@@ -163,6 +163,8 @@ class QCOrchestrator:
                         "BBOX_FOREGROUND_OCCLUSION_FP",
                         "BBOX_NON_CANONICAL_CORNERS",
                         "BBOX_BORDER_TRUNCATION",
+                        "BBOX_TRUNCATION_MISSING_TAG",
+                        "BBOX_TRUNCATION_FP",
                         "BBOX_ASPECT_RATIO_OUTLIER",
                         "KP_OCCLUSION_VISIBILITY_MISMATCH",
                         "KP_UNKNOWN_TEMPLATE_NODE",

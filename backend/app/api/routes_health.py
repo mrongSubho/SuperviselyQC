@@ -3,11 +3,13 @@ from __future__ import annotations
 import time
 from typing import Literal
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 
 from app.config import EngineSettings
 from app.schemas.qc import HealthResponse
+from app.security import verify_bridge_token
 from app.services.image_cache import ImageCacheService
+from app.services.metrics import MetricsTracker
 from app.vision.pipeline import VisionPipeline
 
 router = APIRouter(tags=["health"])
@@ -34,3 +36,10 @@ async def get_health(request: Request) -> HealthResponse:
         cache_stats=image_cache.cache_stats(),
         uptime_seconds=round(max(0.0, time.monotonic() - started_at), 2),
     )
+
+
+@router.get("/api/v1/metrics", dependencies=[Depends(verify_bridge_token)])
+async def get_metrics(request: Request) -> dict[str, object]:
+    """Authenticated lightweight in-memory request/latency metrics."""
+    metrics: MetricsTracker = request.app.state.metrics
+    return metrics.snapshot()

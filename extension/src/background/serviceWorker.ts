@@ -327,12 +327,57 @@ async function handleMessage(
     }
   }
 
+  if (msg.type === "QC_OPEN_OPTIONS_PAGE") {
+    await chrome.runtime.openOptionsPage();
+    return { ok: true };
+  }
+
+  if (msg.type === "QC_TAB_COMMAND") {
+    const count = await dispatchTabCommand(msg.command);
+    return { ok: count > 0, count };
+  }
+
   return { ok: false, error: "Unknown message type" };
+}
+
+async function dispatchTabCommand(
+  command: "QC_TRIGGER_RUN_FROM_ACTION" | "QC_TOGGLE_PANEL_FROM_ACTION",
+): Promise<number> {
+  if (!chrome.tabs?.query || !chrome.tabs?.sendMessage) return 0;
+  const tabs = await chrome.tabs.query({}).catch(() => []);
+  let delivered = 0;
+  for (const tab of tabs) {
+    if (tab.id == null) continue;
+    if (tab.url?.startsWith("chrome-extension://") || tab.url?.startsWith("chrome://")) {
+      continue;
+    }
+    const ok = await chrome.tabs
+      .sendMessage(tab.id, { type: command })
+      .then((res) => Boolean((res as { ok?: boolean } | undefined)?.ok ?? true))
+      .catch(() => false);
+    if (ok) delivered += 1;
+  }
+  return delivered;
 }
 
 chrome.runtime.onMessage.addListener((msg: SwRequestMessage, sender, sendResponse) => {
   void handleMessage(msg, sender).then(sendResponse);
   return true;
+});
+
+chrome.action?.onClicked?.addListener((tab) => {
+  void (async () => {
+    if (tab.id != null) {
+      const delivered = await chrome.tabs
+        .sendMessage(tab.id, { type: "QC_SHOW_TOPBAR_FROM_ACTION" })
+        .then((res) => Boolean((res as { ok?: boolean } | undefined)?.ok ?? true))
+        .catch(() => false);
+      if (delivered) {
+        return;
+      }
+    }
+    await chrome.runtime.openOptionsPage();
+  })();
 });
 
 chrome.runtime.onConnect.addListener((port) => {

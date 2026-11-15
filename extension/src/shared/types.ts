@@ -33,6 +33,7 @@ export interface ExtensionSettings {
   confirmGuardEnabled: boolean;
   confirmGuardStrictness: ConfirmGuardStrictness;
   overlayVisible: boolean;
+  assistantClosed: boolean;
   drawerDockMode: DrawerDockMode;
   floatingDrawerPos: { x: number; y: number } | null;
   floatingTopbarPos: { x: number; y: number } | null;
@@ -46,11 +47,12 @@ export const DEFAULT_EXTENSION_SETTINGS: ExtensionSettings = {
   bridgeToken: "",
   defaultMode: "standard",
   selectedProfileId: "auto",
-  autoRunOnImageSwitch: false,
+  autoRunOnImageSwitch: true,
   autoRunAfterSync: false,
   confirmGuardEnabled: true,
   confirmGuardStrictness: "blockers_and_dirty_sync",
   overlayVisible: true,
+  assistantClosed: false,
   drawerDockMode: "below_minimap",
   floatingDrawerPos: null,
   floatingTopbarPos: null,
@@ -150,6 +152,11 @@ export type SwRequestMessage =
   | {
       type: "QC_POLL_JOB";
       jobId: string;
+    }
+  | { type: "QC_OPEN_OPTIONS_PAGE" }
+  | {
+      type: "QC_TAB_COMMAND";
+      command: "QC_TRIGGER_RUN_FROM_ACTION" | "QC_TOGGLE_PANEL_FROM_ACTION";
     };
 
 export type SwUploadPortMessage =

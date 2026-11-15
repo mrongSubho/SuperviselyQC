@@ -14,9 +14,8 @@ help:
 	@echo "  start-backend    Start FastAPI local server on 127.0.0.1:8765"
 
 bootstrap:
-	$(UV) venv --python 3.12 backend/.venv
-	$(UV) pip install --python $(PYTHON) -e "backend[dev]"
-	npm install
+	$(UV) sync --directory backend --frozen --extra dev
+	npm ci
 
 sync-contracts:
 	$(PYTHON) scripts/sync_contracts.py
@@ -45,4 +44,4 @@ build-extension:
 	npm run build
 
 start-backend:
-	$(PYTHON) backend/main.py
+	SLY_QC_ALLOW_UNPACKED_EXTENSIONS=true $(PYTHON) backend/main.py

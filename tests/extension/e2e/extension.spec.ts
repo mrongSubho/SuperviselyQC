@@ -143,6 +143,7 @@ test.describe("Supervisely Hybrid QC Extension E2E", () => {
         SLY_QC_MODELS_DIR: path.join(backendTempDir, "models"),
         SLY_QC_USER_PROFILES_DIR: path.join(backendTempDir, "profiles"),
         SLY_QC_BRIDGE_TOKEN: bridgeToken,
+        SLY_QC_ALLOW_UNPACKED_EXTENSIONS: "true",
       },
       stdio: "pipe",
     });
@@ -247,6 +248,73 @@ test.describe("Supervisely Hybrid QC Extension E2E", () => {
           () => (window as unknown as { __slyConfirmClicks: number }).__slyConfirmClicks,
         ),
       ).toBe(1);
+
+      // TopBar Options icon opens Options page with relocated controls & cache diagnostics
+      const [optionsPage] = await Promise.all([
+        ext.context.waitForEvent("page"),
+        page.getByTestId("qc-topbar-options").click(),
+      ]);
+      await optionsPage.waitForLoadState("domcontentloaded");
+      expect(optionsPage.url()).toContain(`chrome-extension://${ext.extensionId}/src/options/index.html`);
+      await expect(optionsPage.getByTestId("opt-backend-status-pill")).toContainText("Local CV");
+      await expect(optionsPage.getByTestId("opt-cache-summary")).toContainText("Cache:");
+      await expect(optionsPage.getByTestId("opt-confirm-guard-enabled")).toBeChecked();
+      await expect(optionsPage.getByTestId("opt-overlay-visible")).toBeChecked();
+
+      // Relocated Show Canvas Overlays toggle updates open Supervisely tab live
+      await optionsPage.getByTestId("opt-overlay-visible").uncheck();
+      await expect(page.getByTestId("qc-overlay-toggle")).toHaveText("Overlay Off");
+      await optionsPage.getByTestId("opt-overlay-visible").check();
+      await expect(page.getByTestId("qc-overlay-toggle")).toHaveText("Overlay On");
+      await optionsPage.close();
+
+      // Closing TopBar persists across reloads & image switches; only clicking extension icon brings it back
+      await page.getByTestId("qc-topbar-close").click();
+      await expect(page.getByTestId("qc-topbar")).toHaveCount(0);
+      await expect(page.getByTestId("qc-drawer")).toHaveCount(0);
+
+      // Reloading must NOT reopen a closed extension
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await page.waitForTimeout(700);
+      await expect(page.getByTestId("qc-topbar")).toHaveCount(0);
+      await expect(page.getByTestId("qc-drawer")).toHaveCount(0);
+
+      // Switching images while closed must NOT reopen the extension
+      await page.getByTestId("next-btn").click();
+      await page.waitForTimeout(500);
+      await expect(page.getByTestId("qc-topbar")).toHaveCount(0);
+      await expect(page.getByTestId("qc-drawer")).toHaveCount(0);
+
+      // Clicking extension icon action brings tiny top bar back & persists open across reload
+      const [sw] = ext.context.serviceWorkers();
+      expect(sw).toBeTruthy();
+      await sw!.evaluate(async () => {
+        const tabs = await chrome.tabs.query({});
+        for (const tab of tabs) {
+          if (tab.id != null) {
+            await chrome.tabs.sendMessage(tab.id, { type: "QC_SHOW_TOPBAR_FROM_ACTION" }).catch(() => undefined);
+          }
+        }
+      });
+      await expect(page.getByTestId("qc-topbar")).toBeVisible();
+      await expect(page.getByTestId("qc-drawer")).toHaveCount(0);
+
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await expect(page.getByTestId("qc-topbar")).toBeVisible();
+      await page.waitForTimeout(450);
+      await expect(page.getByTestId("qc-score-pill")).toHaveText("QC --");
+
+      // When open, Prev/Next image switches automatically trigger Run QC on every image
+      await page.getByTestId("prev-btn").click();
+      await expect(page.getByTestId("qc-score-pill")).toHaveText(/^QC \d+$/, { timeout: 10000 });
+      const img100ScoreText = await page.getByTestId("qc-score-pill").innerText();
+
+      await page.getByTestId("next-btn").click();
+      await expect(page.getByTestId("qc-score-pill")).toHaveText(/^QC \d+$/, { timeout: 10000 });
+      await expect(page.getByTestId("qc-score-pill")).not.toHaveText(img100ScoreText, { timeout: 10000 });
+
+      await page.getByTestId("prev-btn").click();
+      await expect(page.getByTestId("qc-score-pill")).toHaveText(img100ScoreText, { timeout: 10000 });
     } finally {
       await ext.cleanup();
     }
@@ -378,7 +446,18 @@ test.describe("Supervisely Hybrid QC Extension E2E", () => {
                   fingerprint: "fp_e2e_switch_horse",
                 },
               ],
-              missedObjects: [],
+              missedObjects: [
+                {
+                  missedId: "miss_e2e_2",
+                  classTitle: "Horse",
+                  geometryType: "rectangle",
+                  bbox: [280, 150, 620, 680],
+                  confidence: 0.89,
+                  sharpnessScore: 39.5,
+                  outsideViewport: false,
+                  detectorModel: "yolo11s",
+                },
+              ],
               sceneSimulation: {
                 totalTargetObjects: 2,
                 completedTargetObjects: 0,
@@ -477,9 +556,10 @@ test.describe("Supervisely Hybrid QC Extension E2E", () => {
       await expect(page.getByTestId("qc-tab-blueprint")).toContainText("Blueprint (0/2)");
       await expect(page.getByTestId("qc-blueprint-panel")).toBeVisible();
 
-      // Clean-by-default after Run QC: no whole-image sim guides and Auto-Draw hidden by default
+      // Clean-by-default after Run QC: no whole-image sim or missed marks and Auto-Draw hidden by default
       await expect(page.getByTestId("qc-sim-guide-1")).toHaveCount(0);
       await expect(page.getByTestId("qc-sim-guide-2")).toHaveCount(0);
+      await expect(page.getByTestId("qc-missed-box-miss_e2e_2")).toHaveCount(0);
       await expect(page.getByTestId("qc-bp-autodraw-1")).toHaveCount(0);
 
       // Simulate All button toggles whole-image simulation guides ON & OFF (and Option+B syncs)

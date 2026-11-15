@@ -188,16 +188,17 @@ def evaluate_global_rules(ctx: RuleContext) -> list[QCFinding]:
         )
 
     # 3. TAG_SCOPE_IMAGE_MISPLACED & TAG_VALUE_INVALID on imageTags
-    object_only_set = set(profile.tag_rules.object_only_tags)
+    object_only_lower = {t.strip().lower() for t in profile.tag_rules.object_only_tags}
     image_only_set = set(profile.tag_rules.image_only_tags)
 
     candidate_fig_ids = [f.figure_id for f in req.figures[:5]]
     for tag in req.image_tags:
         tag_def = ctx.tags_by_name.get(tag.name)
-        is_object_only = (tag.name in object_only_set) or (
+        is_object_only = (tag.name.strip().lower() in object_only_lower) or (
             tag_def is not None and tag_def.applicable_type == "objectsOnly"
         )
         if is_object_only:
+            is_occ = tag.name.strip().lower() == "occlusion"
             fixes = [
                 QuickFixAction(
                     action_id=f"fix_rm_img_tag_{tag.name}",
@@ -211,7 +212,7 @@ def evaluate_global_rules(ctx: RuleContext) -> list[QCFinding]:
                     0,
                     QuickFixAction(
                         action_id=f"fix_mv_img_tag_{tag.name}",
-                        label=f"Move '{tag.name}' to Occluded Object",
+                        label=f"Move '{tag.name}' to Occluded Object" if is_occ else f"Move '{tag.name}' to Object",
                         action_type="move_tag_image_to_object",
                         target_figure_ids=candidate_fig_ids,
                         tag_name=tag.name,
@@ -224,7 +225,11 @@ def evaluate_global_rules(ctx: RuleContext) -> list[QCFinding]:
                     severity="blocker",
                     category="tags",
                     title="Object Tag Attached to Image",
-                    message=f'"{tag.name}" is attached to CURRENT IMAGE TAGS instead of occluded object figure(s).',
+                    message=(
+                        f'"{tag.name}" is attached to CURRENT IMAGE TAGS instead of occluded object figure(s).'
+                        if is_occ
+                        else f'"{tag.name}" is an object-only tag attached to CURRENT IMAGE TAGS instead of object figure(s).'
+                    ),
                     image_tag_names=[tag.name],
                     figure_ids=candidate_fig_ids[:1],
                     fingerprint=f"TAG_SCOPE_IMAGE_MISPLACED:{tag.name}:{img_id}",

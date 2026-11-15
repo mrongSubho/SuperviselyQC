@@ -4,11 +4,22 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import shutil
 import sys
 from pathlib import Path
 
 DEFAULT_MODELS_DIR = Path.home() / ".cache" / "supervisely-qc" / "models"
+
+
+def _write_sha256(path: Path) -> None:
+    digest = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            digest.update(chunk)
+    path.with_suffix(path.suffix + ".sha256").write_text(
+        f"{digest.hexdigest()}  {path.name}\n", encoding="utf-8"
+    )
 
 
 def download_standard_tier(models_dir: Path) -> None:
@@ -23,6 +34,8 @@ def download_standard_tier(models_dir: Path) -> None:
         src = Path(getattr(model, "ckpt_path", None) or "yolo11s.pt")
         if src.exists() and src.resolve() != yolo_target.resolve():
             shutil.copy2(src, yolo_target)
+        if yolo_target.exists():
+            _write_sha256(yolo_target)
         print(f"Ready: {yolo_target}")
 
     from huggingface_hub import snapshot_download  # noqa: PLC0415

@@ -61,7 +61,7 @@ async function run() {
   fs.rmSync(distDir, { recursive: true, force: true });
   fs.mkdirSync(distDir, { recursive: true });
 
-  // 1. Build React HTML pages (Popup + Options) via Vite
+  // 1. Build React HTML pages (Options) via Vite
   await viteBuild({
     configFile: path.resolve(extDir, "vite.config.ts"),
   });

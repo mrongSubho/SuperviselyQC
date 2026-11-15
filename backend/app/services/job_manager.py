@@ -33,6 +33,7 @@ class JobRecord:
     request_id: str
     status: str = "queued"
     cancel_event: threading.Event = field(default_factory=threading.Event)
+    done_event: asyncio.Event = field(default_factory=asyncio.Event)
     result: QCResponse | None = None
     created_at: float = field(default_factory=time.time)
     error_message: str | None = None
@@ -60,6 +61,25 @@ class JobManager:
             job.cancel_event.set()
         self.rules_executor.shutdown(wait=False, cancel_futures=True)
         self.vision_executor.shutdown(wait=False, cancel_futures=True)
+
+    async def ashutdown(self, grace_seconds: float = 3.0) -> None:
+        """Signal cancellation to active jobs and wait briefly for MPS workers to wind down."""
+        active = [
+            job.done_event.wait()
+            for job in self._jobs.values()
+            if job.status in {"queued", "running"}
+        ]
+        for job in self._jobs.values():
+            job.cancel_event.set()
+        if active:
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(*active, return_exceptions=True),
+                    timeout=grace_seconds,
+                )
+            except TimeoutError:
+                pass
+        self.shutdown()
 
     async def register_ws(self, client_id: str, websocket: WebSocket) -> None:
         self._websockets[client_id] = websocket
@@ -98,6 +118,7 @@ class JobManager:
                     job.status = "failed"
                     job.error_message = "Superseded by newer snapshotSeq"
                     job.result = self._make_cancelled_response(job)
+                    job.done_event.set()
 
     @staticmethod
     def _make_cancelled_response(job: JobRecord, code: str = "MODEL_EXECUTION_ERROR") -> QCResponse:
@@ -203,46 +224,71 @@ class JobManager:
                 )
             )
 
-        async with self._vision_lock:
-            if job.cancel_event.is_set() or (
-                self._latest_seq_by_image.get(job.image_id, 0) > job.snapshot_seq
-            ):
-                job.cancel_event.set()
-                job.status = "failed"
-                job.error_message = "Superseded by newer snapshotSeq before execution"
-                job.result = self._make_cancelled_response(job)
-                return
-
-            job.status = "running"
-            await self.broadcast_event(
-                WsEvent(
-                    event_type="job_progress",
-                    job_id=job.job_id,
-                    stage="starting_vision",
-                    progress_pct=10.0,
-                )
-            )
-
-            loop = asyncio.get_running_loop()
-            try:
-                future = loop.run_in_executor(
-                    self.vision_executor,
-                    lambda: self.orchestrator.analyze_sync(
-                        request,
-                        profile,
-                        effective_mode=effective_mode,
-                        degraded_reason=degraded_reason,
-                        cancel_event=job.cancel_event,
-                        progress_cb=on_progress,
-                        job_id=job.job_id,
-                    ),
-                )
-                result = await asyncio.wait_for(
-                    future, timeout=self.settings.deep_job_timeout_seconds
-                )
-                if job.cancel_event.is_set():
+        try:
+            async with self._vision_lock:
+                if job.cancel_event.is_set() or (
+                    self._latest_seq_by_image.get(job.image_id, 0) > job.snapshot_seq
+                ):
+                    job.cancel_event.set()
                     job.status = "failed"
-                    job.error_message = "Job cancelled by newer snapshotSeq"
+                    job.error_message = "Superseded by newer snapshotSeq before execution"
+                    job.result = self._make_cancelled_response(job)
+                    return
+
+                job.status = "running"
+                await self.broadcast_event(
+                    WsEvent(
+                        event_type="job_progress",
+                        job_id=job.job_id,
+                        stage="starting_vision",
+                        progress_pct=10.0,
+                    )
+                )
+
+                loop = asyncio.get_running_loop()
+                try:
+                    future = loop.run_in_executor(
+                        self.vision_executor,
+                        lambda: self.orchestrator.analyze_sync(
+                            request,
+                            profile,
+                            effective_mode=effective_mode,
+                            degraded_reason=degraded_reason,
+                            cancel_event=job.cancel_event,
+                            progress_cb=on_progress,
+                            job_id=job.job_id,
+                        ),
+                    )
+                    result = await asyncio.wait_for(
+                        future, timeout=self.settings.deep_job_timeout_seconds
+                    )
+                    if job.cancel_event.is_set():
+                        job.status = "failed"
+                        job.error_message = "Job cancelled by newer snapshotSeq"
+                        job.result = self._make_cancelled_response(job)
+                        await self.broadcast_event(
+                            WsEvent(
+                                event_type="job_failed",
+                                job_id=job.job_id,
+                                error=job.error_message,
+                            )
+                        )
+                        return
+
+                    job.status = "completed"
+                    job.result = result
+                    await self.broadcast_event(
+                        WsEvent(
+                            event_type="job_completed",
+                            job_id=job.job_id,
+                            progress_pct=100.0,
+                            result=result,
+                        )
+                    )
+                except TimeoutError:
+                    job.cancel_event.set()
+                    job.status = "failed"
+                    job.error_message = f"Deep QC exceeded {self.settings.deep_job_timeout_seconds:.1f}s timeout"
                     job.result = self._make_cancelled_response(job)
                     await self.broadcast_event(
                         WsEvent(
@@ -251,41 +297,36 @@ class JobManager:
                             error=job.error_message,
                         )
                     )
-                    return
-
-                job.status = "completed"
-                job.result = result
-                await self.broadcast_event(
-                    WsEvent(
-                        event_type="job_completed",
-                        job_id=job.job_id,
-                        progress_pct=100.0,
-                        result=result,
+                except Exception as exc:
+                    job.status = "failed"
+                    job.error_message = str(exc)
+                    job.result = self._make_cancelled_response(job)
+                    await self.broadcast_event(
+                        WsEvent(
+                            event_type="job_failed",
+                            job_id=job.job_id,
+                            error=job.error_message,
+                        )
                     )
-                )
+        finally:
+            job.done_event.set()
+
+    async def wait_for_job(self, job_id: str, timeout: float | None = None) -> QCResponse | None:
+        """Await job completion via asyncio.Event instead of busy-wait polling."""
+        job = self._jobs.get(job_id)
+        if job is None:
+            return None
+        if job.status not in {"completed", "failed"}:
+            wait_timeout = timeout if timeout is not None else self.settings.deep_job_timeout_seconds + 2.0
+            try:
+                await asyncio.wait_for(job.done_event.wait(), timeout=wait_timeout)
             except TimeoutError:
                 job.cancel_event.set()
                 job.status = "failed"
-                job.error_message = f"Deep QC exceeded {self.settings.deep_job_timeout_seconds:.1f}s timeout"
+                job.error_message = f"Deep QC wait exceeded {wait_timeout:.1f}s timeout"
                 job.result = self._make_cancelled_response(job)
-                await self.broadcast_event(
-                    WsEvent(
-                        event_type="job_failed",
-                        job_id=job.job_id,
-                        error=job.error_message,
-                    )
-                )
-            except Exception as exc:
-                job.status = "failed"
-                job.error_message = str(exc)
-                job.result = self._make_cancelled_response(job)
-                await self.broadcast_event(
-                    WsEvent(
-                        event_type="job_failed",
-                        job_id=job.job_id,
-                        error=job.error_message,
-                    )
-                )
+                job.done_event.set()
+        return self.get_job_response(job_id)
 
     def get_job_response(self, job_id: str) -> QCResponse | None:
         job = self._jobs.get(job_id)

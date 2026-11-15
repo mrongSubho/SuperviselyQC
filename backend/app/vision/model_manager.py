@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import gc
+import hashlib
+import hmac
 import importlib.util
 import platform
 import sys
@@ -67,9 +69,18 @@ class ModelManager:
 
     def has_weight_file(self, filename: str) -> Path | None:
         candidate = self.models_dir / filename
-        if candidate.exists() and candidate.is_file() and candidate.stat().st_size > 0:
-            return candidate
-        return None
+        if not (candidate.exists() and candidate.is_file() and candidate.stat().st_size > 0):
+            return None
+        sha_path = candidate.with_suffix(candidate.suffix + ".sha256")
+        if sha_path.exists() and sha_path.is_file():
+            expected = sha_path.read_text(encoding="utf-8").strip().split()[0].lower()
+            digest = hashlib.sha256()
+            with candidate.open("rb") as fh:
+                for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                    digest.update(chunk)
+            if not hmac.compare_digest(digest.hexdigest().lower(), expected):
+                return None
+        return candidate
 
     def register_model(self, name: str, model: Any, heavy: bool = False) -> None:
         with self._lock:
@@ -116,11 +127,12 @@ class ModelManager:
     def release_all(self) -> None:
         with self._lock:
             self._models.clear()
-        self.release_device_cache()
+        self.release_device_cache(collect_gc=True)
 
     @staticmethod
-    def release_device_cache() -> None:
-        gc.collect()
+    def release_device_cache(collect_gc: bool = False) -> None:
+        if collect_gc:
+            gc.collect()
         if "torch" in sys.modules:
             torch = sys.modules["torch"]
             try:

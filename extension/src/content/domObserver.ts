@@ -319,12 +319,81 @@ export function extractDomFallbackSummaries(): {
   return { domFigureSummaries, imageTagNamesDom };
 }
 
-export function extractDomOntologyClasses(): Array<{ title: string; shape: "rectangle" }> {
+export function extractDomObjectTags(): Array<{ name: string }> {
+  let objTagsPanel = document.querySelector<HTMLElement>(
+    '[data-qc-role="object-tags"], [class*="object-tags"], [data-testid*="object-tags"]',
+  );
+  if (!objTagsPanel) {
+    const heading = Array.from(
+      document.querySelectorAll<HTMLElement>("div, span, h2, h3, h4, header"),
+    ).find(
+      (h) =>
+        !h.closest("#sly-qc-topbar-host, #sly-qc-drawer-host, #sly-qc-modal-host") &&
+        /^\s*CURRENT OBJECT\b.*\bTAGS\s*$/i.test(h.textContent ?? ""),
+    );
+    objTagsPanel =
+      (heading?.closest('[class*="sidebar"], [class*="panel"], aside, section') as HTMLElement | null) ??
+      heading?.parentElement ??
+      null;
+  }
+  if (!objTagsPanel) return [];
+
+  const seen = new Set<string>();
+  const out: Array<{ name: string }> = [];
+  const candidates = Array.from(
+    objTagsPanel.querySelectorAll<HTMLElement>(
+      "[data-tag-name], label, [role='checkbox'], .tag-chip, .ant-tag, span",
+    ),
+  );
+  for (const el of candidates) {
+    const explicit = el.dataset.tagName?.trim();
+    const raw = explicit || (el.textContent ?? "").trim();
+    if (!raw || raw.length >= 48) continue;
+    if (/current object|tags|\{\}|^\d+$/i.test(raw)) continue;
+    if (/[×\n\r{}]/.test(raw)) continue;
+    const key = raw.toLowerCase();
+    if (!seen.has(key)) {
+      seen.add(key);
+      out.push({ name: raw });
+    }
+  }
+  return out;
+}
+
+function inferDomClassShape(
+  row: HTMLElement,
+  title: string,
+): "rectangle" | "polygon" | "polyline" | "bitmap" | "point" | "graph" {
+  const attrShape = (row.dataset.shape ?? row.dataset.geometryType ?? "").trim().toLowerCase();
+  if (attrShape === "bitmap" || attrShape === "brush" || attrShape === "mask") return "bitmap";
+  if (attrShape === "polygon" || attrShape === "poly") return "polygon";
+  if (attrShape === "polyline" || attrShape === "line") return "polyline";
+  if (attrShape === "graph" || attrShape === "keypoint" || attrShape === "keypoints" || attrShape === "skeleton") {
+    return "graph";
+  }
+  if (attrShape === "point") return "point";
+  if (attrShape === "rectangle" || attrShape === "rect" || attrShape === "bbox") return "rectangle";
+
+  const trimmed = title.trim();
+  if (/(?:[_\-\s]+)(?:b|brush|bitmap|mask)$/i.test(trimmed)) return "bitmap";
+  if (/(?:[_\-\s]+)(?:p|poly|polygon|seg)$/i.test(trimmed)) return "polygon";
+  if (/(?:[_\-\s]+)(?:l|line|polyline)$/i.test(trimmed)) return "polyline";
+  if (/(?:[_\-\s]+)(?:k|kp|kpt|keypoint|keypoints|pose|graph)$/i.test(trimmed)) return "graph";
+  return "rectangle";
+}
+
+export function extractDomOntologyClasses(): Array<{
+  title: string;
+  shape: "rectangle" | "polygon" | "polyline" | "bitmap" | "point" | "graph";
+}> {
   const root = findClassesSidebarRoot();
   if (!root) return [];
   const rows = getSidebarClassRowElements(root);
   const seen = new Set<string>();
-  const out: Array<{ title: string; shape: "rectangle" }> = [];
+  const out: Array<{
+    title: string;
+    shape: "rectangle" | "polygon" | "polyline" | "bitmap" | "point" | "graph";
+  }> = [];
   for (const row of rows) {
     const title = getSidebarClassRowTitle(row);
     if (!title || title.length > 48) continue;
@@ -335,7 +404,7 @@ export function extractDomOntologyClasses(): Array<{ title: string; shape: "rect
     const key = title.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push({ title, shape: "rectangle" });
+    out.push({ title, shape: inferDomClassShape(row, title) });
   }
   return out;
 }

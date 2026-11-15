@@ -9,7 +9,12 @@ from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 
-from app.rules.bbox_rules import estimate_bbox_foreground_score
+from app.rules.bbox_rules import (
+    estimate_bbox_foreground_score,
+    is_bbox_touching_frame_edge,
+    is_truncation_tag_name,
+    resolve_truncation_tag_name,
+)
 from app.rules.context import (
     NormalizedFigure,
     RuleContext,
@@ -26,6 +31,10 @@ from app.schemas.qc import (
     SimulatedClassSummary,
     SimulatedObjectCandidate,
     SimulatedTagRecommendation,
+)
+from app.vision.detector import (
+    infer_shape_from_ontology_title,
+    strip_ontology_tool_suffix,
 )
 from app.vision.occlusion_depth import compute_depth_delta, resolve_pair_depth_order
 from app.vision.tiling import DetectionCandidate
@@ -91,9 +100,19 @@ class _FilteredCandidate:
 
 
 def _is_superclass_of(superclass_title: str, subclass_title: str) -> bool:
-    sup = superclass_title.strip().lower()
-    sub = subclass_title.strip().lower()
+    sup = strip_ontology_tool_suffix(superclass_title).strip().lower()
+    sub = strip_ontology_tool_suffix(subclass_title).strip().lower()
     return sup != sub and sub in _SUPERCLASS_TO_SUBCLASSES.get(sup, set())
+
+
+def _resolve_recommended_shape(ctx: RuleContext, class_title: str) -> GeometryType:
+    cls_def = ctx.classes_by_title.get(class_title)
+    if cls_def and cls_def.shape != "any":
+        return cls_def.shape
+    inferred = infer_shape_from_ontology_title(class_title)
+    if inferred is not None:
+        return inferred
+    return cls_def.shape if cls_def else "rectangle"
 
 
 def _tokenize_filename(file_name: str) -> set[str]:
@@ -270,7 +289,8 @@ class SceneSimulator:
         # Record filename keyword hint when it reinforces a surviving ontology class
         surviving_classes = {c.class_title for c in surviving}
         for cls_title in sorted(surviving_classes):
-            if cls_title.lower() in filename_tokens:
+            stem_lower = strip_ontology_tool_suffix(cls_title).lower()
+            if cls_title.lower() in filename_tokens or stem_lower in filename_tokens:
                 _add_note(
                     f"Filename '{ctx.request.image.file_name}' matches target class '{cls_title}'."
                 )
@@ -301,19 +321,27 @@ class SceneSimulator:
         ious = np.zeros((n_cands, n_figs), dtype=np.float64)
 
         for i, cand in enumerate(surviving):
+            cand_stem = strip_ontology_tool_suffix(cand.class_title).lower()
             for j, nf in enumerate(two_d_figs):
                 fig_cls = nf.figure.class_title
+                fig_stem = strip_ontology_tool_suffix(fig_cls).lower()
                 fig_unknown = fig_cls.strip().lower() in {"", "unknown"}
                 compatible = (
                     fig_cls.lower() == cand.class_title.lower()
+                    or fig_stem == cand_stem
                     or _is_superclass_of(fig_cls, cand.class_title)
                     or _is_superclass_of(cand.class_title, fig_cls)
+                )
+                min_iou = (
+                    0.42
+                    if nf.figure.geometry_type in {"bitmap", "polygon"}
+                    else 0.50
                 )
                 iou, _, _, _ = bbox_iou_and_ios(cand.bbox, nf.bbox)
                 if not compatible and not (fig_unknown and iou >= 0.65):
                     continue
                 ious[i, j] = iou
-                if iou >= 0.50:
+                if iou >= min_iou:
                     cost[i, j] = 1.0 - iou
                 else:
                     cost[i, j] = 1e3
@@ -321,8 +349,10 @@ class SceneSimulator:
         row_ind, col_ind = linear_sum_assignment(cost)
         matches: dict[int, str] = {}
         for r, c in zip(row_ind, col_ind, strict=True):
-            if ious[r, c] >= 0.50:
-                matches[int(r)] = two_d_figs[int(c)].figure.figure_id
+            nf = two_d_figs[int(c)]
+            min_iou = 0.42 if nf.figure.geometry_type in {"bitmap", "polygon"} else 0.50
+            if ious[r, c] >= min_iou:
+                matches[int(r)] = nf.figure.figure_id
         return matches
 
     def simulate(
@@ -428,30 +458,26 @@ class SceneSimulator:
         matched_map = self._match_existing_figures(surviving, two_d_figs)
 
         vp = ctx.request.viewport
-        margin = float(ctx.profile.geometry_rules.edge_snap_margin_px)
+        w_f, h_f = float(ctx.width), float(ctx.height)
+        sim_margin = max(
+            float(ctx.profile.geometry_rules.edge_snap_margin_px),
+            0.005 * min(w_f, h_f),
+        )
         sim_candidates: list[SimulatedObjectCandidate] = []
 
         for idx, cand in enumerate(surviving):
             sim_index = idx + 1
             sim_id = f"sim_{sim_index:02d}"
-            cls_def = ctx.classes_by_title.get(cand.class_title)
-            rec_shape: GeometryType = cls_def.shape if cls_def else "rectangle"
+            rec_shape: GeometryType = _resolve_recommended_shape(ctx, cand.class_title)
 
             occ_pairs = occluders_by_idx.get(idx, [])
             occ_indices = sorted({sim_i for sim_i, _ in occ_pairs})
             rec_tags: list[SimulatedTagRecommendation] = []
 
             bx1, by1, bx2, by2 = cand.bbox
-            touches_border = (
-                bx1 <= margin
-                or by1 <= margin
-                or bx2 >= float(ctx.width) - margin
-                or by2 >= float(ctx.height) - margin
-            )
+            touches_edge = is_bbox_touching_frame_edge(cand.bbox, w_f, h_f, sim_margin)
 
-            visibility_status: Literal["foreground_clear", "occluded", "border_truncated"]
             if occ_indices:
-                visibility_status = "occluded"
                 occ_tag_name = _resolve_object_tag_name(ctx, cand.class_title, "Occlusion")
                 if occ_tag_name:
                     fg_refs = ", ".join(f"#{fg_idx}" for fg_idx in occ_indices)
@@ -464,26 +490,31 @@ class SceneSimulator:
                             confidence=round(max_pair_conf, 3),
                         )
                     )
-            elif touches_border:
+
+            if touches_edge:
+                trunc_tag_name, _ = resolve_truncation_tag_name(
+                    ctx,
+                    cand.class_title,
+                    fallback_to_profile=True,
+                    default_advisory="Truncation",
+                )
+                if trunc_tag_name and all(
+                    t.tag_name.lower() != trunc_tag_name.lower() for t in rec_tags
+                ):
+                    rec_tags.append(
+                        SimulatedTagRecommendation(
+                            tag_name=trunc_tag_name,
+                            value=None,
+                            reason=f"Cut off at image frame edge; apply {trunc_tag_name} tag.",
+                            confidence=0.88,
+                        )
+                    )
+
+            visibility_status: Literal["foreground_clear", "occluded", "border_truncated"]
+            if occ_indices:
+                visibility_status = "occluded"
+            elif touches_edge:
                 visibility_status = "border_truncated"
-                # Recommend Truncated only when explicitly defined in ontology.tags
-                for tag_def in ctx.request.ontology.tags:
-                    if tag_def.name.strip().lower() == "truncated" and tag_def.applicable_type in {
-                        "objectsOnly",
-                        "all",
-                    }:
-                        if not tag_def.classes or any(
-                            c.lower() == cand.class_title.lower() for c in tag_def.classes
-                        ):
-                            rec_tags.append(
-                                SimulatedTagRecommendation(
-                                    tag_name=tag_def.name,
-                                    value=None,
-                                    reason="Touches image border; apply Truncated tag.",
-                                    confidence=0.88,
-                                )
-                            )
-                            break
             else:
                 visibility_status = "foreground_clear"
 
@@ -528,8 +559,7 @@ class SceneSimulator:
 
         for cls_title in primary_target_classes:
             group = by_class.get(cls_title, [])
-            cls_def = ctx.classes_by_title.get(cls_title)
-            rec_shape = cls_def.shape if cls_def else "rectangle"
+            rec_shape = _resolve_recommended_shape(ctx, cls_title)
             tag_counts: dict[str, int] = {}
             for sc in group:
                 for rec in sc.recommended_object_tags:
@@ -547,7 +577,10 @@ class SceneSimulator:
                     ),
                     occluded_count=sum(1 for sc in group if sc.visibility_status == "occluded"),
                     border_truncated_count=sum(
-                        1 for sc in group if sc.visibility_status == "border_truncated"
+                        1
+                        for sc in group
+                        if sc.visibility_status == "border_truncated"
+                        or any(is_truncation_tag_name(t.tag_name) for t in sc.recommended_object_tags)
                     ),
                     tag_counts=tag_counts,
                 )

@@ -213,7 +213,7 @@ describe("offlineQcEngine Layer-1 parity", () => {
 
     const smallRes = await runOfflineDeterministicQc(smallImgReq, makeProfile());
     const smallMicroIds = smallRes.findings
-      .filter((f) => f.ruleId === "GEOM_MICRO_CLICK")
+      .filter((f) => f.ruleId === "GEOM_EXTREME_MICRO_CLICK")
       .flatMap((f) => f.figureIds);
     expect(smallMicroIds).toEqual(["box_10"]);
 
@@ -239,7 +239,7 @@ describe("offlineQcEngine Layer-1 parity", () => {
       ],
     });
     const largeRes = await runOfflineDeterministicQc(largeImgReq, makeProfile());
-    expect(largeRes.findings.some((f) => f.ruleId === "GEOM_MICRO_CLICK")).toBe(false);
+    expect(largeRes.findings.some((f) => f.ruleId === "GEOM_EXTREME_MICRO_CLICK")).toBe(false);
   });
 
   it("handles CW vs CCW polygons, bowtie self-intersection, and invalid holes", async () => {
@@ -388,7 +388,7 @@ describe("offlineQcEngine Layer-1 parity", () => {
     });
 
     const res = await runOfflineDeterministicQc(req, makeProfile());
-    const dupFindings = res.findings.filter((f) => f.ruleId === "DUPLICATE_OBJECT");
+    const dupFindings = res.findings.filter((f) => f.ruleId === "GEOM_DUPLICATE_FIGURE");
     expect(dupFindings).toHaveLength(4);
   });
 
@@ -429,5 +429,56 @@ describe("offlineQcEngine Layer-1 parity", () => {
     expect(rules).toContain("CLASS_DISABLED_IN_PROFILE");
     expect(rules).toContain("CLASS_OUT_OF_JOB_SCOPE");
     expect(rules).not.toContain("GEOM_OUT_OF_BOUNDS");
+  });
+
+  it("flags near-miss border gaps, missing Truncation tag, and interior Truncation false positives", async () => {
+    const profile = makeProfile({
+      tagRules: {
+        imageOnlyTags: [],
+        objectOnlyTags: ["Occlusion", "Truncation", "Truncated"],
+        occlusionOverlapIouThreshold: 0.1,
+        occlusionCoverRatioThreshold: 0.15,
+        flagForegroundOcclusionFalsePositive: true,
+      },
+    });
+    const req = makeBaseRequest({
+      figures: [
+        {
+          figureId: "fig_near_gap",
+          classId: 1,
+          classTitle: "car",
+          geometryType: "rectangle",
+          points: { exterior: [[800, 200], [993, 600]], interior: [] },
+          tags: [],
+        },
+        {
+          figureId: "fig_edge_untagged",
+          classId: 1,
+          classTitle: "car",
+          geometryType: "rectangle",
+          points: { exterior: [[0, 100], [180, 400]], interior: [] },
+          tags: [],
+        },
+        {
+          figureId: "fig_interior_fp",
+          classId: 1,
+          classTitle: "car",
+          geometryType: "rectangle",
+          points: { exterior: [[300, 200], [500, 450]], interior: [] },
+          tags: [{ tagId: 502, name: "Truncation", value: null }],
+        },
+      ],
+    });
+
+    const res = await runOfflineDeterministicQc(req, profile);
+    const gap = res.findings.find((f) => f.ruleId === "BBOX_BORDER_TRUNCATION");
+    const missingTrunc = res.findings.find((f) => f.ruleId === "BBOX_TRUNCATION_MISSING_TAG");
+    const truncFp = res.findings.find((f) => f.ruleId === "BBOX_TRUNCATION_FP");
+
+    expect(gap?.figureIds).toEqual(["fig_near_gap"]);
+    expect(missingTrunc?.figureIds).toEqual(["fig_edge_untagged"]);
+    expect(missingTrunc?.suggestedFixes[0]?.tagName).toBe("Truncation");
+    expect(truncFp?.figureIds).toEqual(["fig_interior_fp"]);
+    expect(truncFp?.suggestedFixes[0]?.actionType).toBe("remove_object_tag");
   });
 });

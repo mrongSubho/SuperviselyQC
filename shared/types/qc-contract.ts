@@ -442,6 +442,7 @@ export interface RuleProfile {
     enableDepthOcclusionOrdering: boolean;
   };
   classOverrides: Record<string, ClassRuleOverride>;
+  detectorAliases?: Record<string, string[]>;
 }
 
 export interface ProfileListResponse {

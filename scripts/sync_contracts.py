@@ -17,6 +17,7 @@ if str(BACKEND_DIR) not in sys.path:
 
 from pydantic.json_schema import models_json_schema  # noqa: E402
 
+from app.config import EngineTunables  # noqa: E402
 from app.schemas.qc import (  # noqa: E402
     ApiErrorEnvelope,
     BitmapGeometry,
@@ -51,6 +52,7 @@ from app.schemas.qc import (  # noqa: E402
 )
 
 SCHEMA_PATH = ROOT_DIR / "shared" / "schemas" / "qc-contract.schema.json"
+TUNABLES_PATH = ROOT_DIR / "shared" / "schemas" / "rule-tunables.json"
 TS_CONTRACT_PATH = ROOT_DIR / "shared" / "types" / "qc-contract.ts"
 
 CONTRACT_MODELS = [
@@ -244,6 +246,7 @@ def main() -> int:
 
     bundle = build_schema_bundle()
     serialized = json.dumps(bundle, indent=2, sort_keys=True) + "\n"
+    tunables_serialized = json.dumps(EngineTunables().model_dump(), indent=2, sort_keys=True) + "\n"
 
     if args.check:
         if not SCHEMA_PATH.exists():
@@ -257,10 +260,19 @@ def main() -> int:
                 file=sys.stderr,
             )
             return 1
+        if not TUNABLES_PATH.exists() or TUNABLES_PATH.read_text(encoding="utf-8") != tunables_serialized:
+            print(
+                f"ERROR: {TUNABLES_PATH} is out of date with backend/app/config.py EngineTunables. "
+                "Run 'python scripts/sync_contracts.py' to regenerate.",
+                file=sys.stderr,
+            )
+            return 1
     else:
         SCHEMA_PATH.parent.mkdir(parents=True, exist_ok=True)
         SCHEMA_PATH.write_text(serialized, encoding="utf-8")
         print(f"Wrote {SCHEMA_PATH}")
+        TUNABLES_PATH.write_text(tunables_serialized, encoding="utf-8")
+        print(f"Wrote {TUNABLES_PATH}")
 
     parity_errors = verify_ts_parity(bundle)
     if parity_errors:

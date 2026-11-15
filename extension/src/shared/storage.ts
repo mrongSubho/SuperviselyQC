@@ -27,18 +27,24 @@ export async function loadSettings(): Promise<ExtensionSettings> {
   };
 }
 
-export async function saveSettings(
+let settingsWriteQueue: Promise<unknown> = Promise.resolve();
+
+export function saveSettings(
   partial: Partial<ExtensionSettings>,
 ): Promise<ExtensionSettings> {
-  const current = await loadSettings();
-  const next: ExtensionSettings = {
-    ...current,
-    ...partial,
-  };
-  if (hasChromeStorage()) {
-    await chrome.storage.local.set({ [SETTINGS_KEY]: next });
-  }
-  return next;
+  const op = settingsWriteQueue.then(async () => {
+    const current = await loadSettings();
+    const next: ExtensionSettings = {
+      ...current,
+      ...partial,
+    };
+    if (hasChromeStorage()) {
+      await chrome.storage.local.set({ [SETTINGS_KEY]: next });
+    }
+    return next;
+  });
+  settingsWriteQueue = op.catch(() => undefined);
+  return op;
 }
 
 export function subscribeSettingsChanges(

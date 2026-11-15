@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
 from fastapi import APIRouter, Depends, Query, Request, Response, WebSocket, WebSocketDisconnect, status
 
@@ -98,11 +99,14 @@ async def analyze_snapshot(
         )
 
     # Synchronous wait if caller explicitly requested asyncIfHeavy=false
-    while True:
-        current = job_manager.get_job_response(job.job_id)
-        if current and current.status in {"completed", "failed"}:
-            return current
-        await asyncio.sleep(0.05)
+    waited = await job_manager.wait_for_job(job.job_id)
+    if waited is not None:
+        return waited
+    return error_response(
+        status.HTTP_500_INTERNAL_SERVER_ERROR,
+        "MODEL_EXECUTION_ERROR",
+        f"Job '{job.job_id}' disappeared before completion",
+    )
 
 
 @router.get(
@@ -128,12 +132,23 @@ async def qc_websocket(
     token: str | None = Query(default=None),
 ) -> None:
     expected_token: str = websocket.app.state.bridge_token
-    if not verify_ws_bridge_token(expected_token, token):
-        await websocket.accept()
-        await websocket.close(code=4001, reason="Unauthorized bridge token")
-        return
-
     await websocket.accept()
+    if token is not None:
+        if not verify_ws_bridge_token(expected_token, token):
+            await websocket.close(code=4001, reason="Unauthorized bridge token")
+            return
+    else:
+        try:
+            raw_auth = await asyncio.wait_for(websocket.receive_text(), timeout=5.0)
+            auth_payload = json.loads(raw_auth)
+            ws_token = auth_payload.get("token") if isinstance(auth_payload, dict) else None
+        except Exception:
+            await websocket.close(code=4001, reason="Unauthorized bridge token")
+            return
+        if not verify_ws_bridge_token(expected_token, ws_token if isinstance(ws_token, str) else None):
+            await websocket.close(code=4001, reason="Unauthorized bridge token")
+            return
+
     job_manager = websocket.app.state.job_manager
     await job_manager.register_ws(client_id, websocket)
     try:

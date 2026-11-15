@@ -460,7 +460,9 @@ class WorkflowRulesConfig(CamelModel):
 
 class TagRulesConfig(CamelModel):
     image_only_tags: list[str] = Field(default_factory=list)
-    object_only_tags: list[str] = Field(default_factory=lambda: ["Occlusion"])
+    object_only_tags: list[str] = Field(
+        default_factory=lambda: ["Occlusion", "Truncation", "Truncated"]
+    )
     occlusion_overlap_iou_threshold: float = Field(default=0.10, ge=0.0, le=1.0)
     occlusion_cover_ratio_threshold: float = Field(default=0.15, ge=0.0, le=1.0)
     flag_foreground_occlusion_false_positive: bool = True
@@ -495,6 +497,7 @@ class RuleProfile(CamelModel):
     geometry_rules: GeometryRulesConfig = Field(default_factory=GeometryRulesConfig)
     vision_rules: VisionRulesConfig = Field(default_factory=VisionRulesConfig)
     class_overrides: dict[str, ClassRuleOverride] = Field(default_factory=dict)
+    detector_aliases: dict[str, list[str]] = Field(default_factory=dict)
 
 
 class ProfileListResponse(CamelModel):

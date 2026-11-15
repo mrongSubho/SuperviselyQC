@@ -159,6 +159,16 @@ button, input, select {
   justify-content: center;
 }
 
+.qc-topbar-options {
+  color: var(--sly-text-secondary);
+}
+
+.qc-topbar-options:hover {
+  color: #c4b5fd;
+  border-color: rgba(107, 78, 255, 0.55);
+  background: rgba(107, 78, 255, 0.14);
+}
+
 .qc-topbar-close {
   color: var(--sly-text-secondary);
 }
@@ -677,6 +687,10 @@ button, input, select {
   border-left-color: #f59e0b;
 }
 
+.qc-bp-item.truncated {
+  border-left-color: #fb923c;
+}
+
 .qc-bp-item.completed {
   border-left-color: #34d399;
   opacity: 0.85;
@@ -687,6 +701,13 @@ button, input, select {
   flex-direction: column;
   gap: 3px;
   min-width: 0;
+}
+
+.qc-bp-badge-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
 }
 
 .qc-bp-item-title {
@@ -713,6 +734,11 @@ button, input, select {
 .qc-bp-badge.occluded {
   background: rgba(245, 158, 11, 0.18);
   color: #fcd34d;
+}
+
+.qc-bp-badge.truncated {
+  background: rgba(251, 146, 60, 0.18);
+  color: #fdba74;
 }
 
 .qc-bp-badge.completed {

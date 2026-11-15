@@ -1,6 +1,6 @@
 import yaml from "js-yaml";
 import { useEffect, useState } from "react";
-import { loadSettings, saveSettings } from "../shared/storage";
+import { loadSettings, saveSettings, subscribeSettingsChanges } from "../shared/storage";
 import {
   DEFAULT_EXTENSION_SETTINGS,
   type ConfirmGuardStrictness,
@@ -52,12 +52,50 @@ export function Options() {
       setSettings(loaded);
       void testBackend();
     });
+    return subscribeSettingsChanges((updated) => {
+      setSettings(updated);
+    });
   }, []);
 
   const persist = async (patch: Partial<ExtensionSettings>) => {
+    setSettings((prev) => ({ ...prev, ...patch }));
     const next = await saveSettings(patch);
     setSettings(next);
     setStatusMsg("Saved settings.");
+  };
+
+  const triggerTabAction = async (
+    command: "QC_TRIGGER_RUN_FROM_ACTION" | "QC_TOGGLE_PANEL_FROM_ACTION",
+    actionLabel: string,
+  ) => {
+    try {
+      const res = (await chrome.runtime.sendMessage({
+        type: "QC_TAB_COMMAND",
+        command,
+      })) as { ok?: boolean; count?: number } | undefined;
+      if (res?.ok && (res.count ?? 0) > 0) {
+        setStatusMsg(`${actionLabel} applied on ${res.count} Supervisely tab(s).`);
+      } else {
+        setStatusMsg("No active Supervisely labeling tab found.");
+      }
+    } catch (err) {
+      setStatusMsg(`Failed to reach Supervisely tab: ${String(err)}`);
+    }
+  };
+
+  const parsedDraftProfile: RuleProfile | null = (() => {
+    if (!yamlDraft.trim()) return null;
+    try {
+      const obj = yaml.load(yamlDraft);
+      return obj && typeof obj === "object" ? (obj as RuleProfile) : null;
+    } catch {
+      return null;
+    }
+  })();
+
+  const updateDraftProfile = (updater: (p: RuleProfile) => RuleProfile) => {
+    if (!parsedDraftProfile) return;
+    setYamlDraft(yaml.dump(updater(parsedDraftProfile)));
   };
 
   const handleExportYaml = async () => {
@@ -127,6 +165,24 @@ export function Options() {
         fontSize: "13px",
       }}
     >
+      {/* First-Run Onboarding Checklist */}
+      <section style={cardStyle} data-testid="onboarding-checklist">
+        <h2 style={{ margin: "0 0 10px", fontSize: "15px" }}>Setup Checklist</h2>
+        <div style={{ display: "grid", gap: "6px", fontSize: "13px" }}>
+          <div>
+            {health ? "✅" : "⚠️"} <strong>Local Daemon:</strong>{" "}
+            {health ? `Online (${health.device.toUpperCase()}, v${health.version})` : "Offline — run `make start-backend`"}
+          </div>
+          <div>
+            {settings.bridgeToken.trim() ? "✅" : "⚠️"} <strong>Bridge Token:</strong>{" "}
+            {settings.bridgeToken.trim() ? "Configured" : "Paste token from ~/.config/supervisely-qc/bridge_token"}
+          </div>
+          <div>
+            {profiles.length > 0 ? "✅" : "⚠️"} <strong>Rule Profiles:</strong>{" "}
+            {profiles.length > 0 ? `${profiles.length} loaded` : "Waiting for authenticated daemon connection"}
+          </div>
+        </div>
+      </section>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "18px" }}>
         <div>
           <h1 style={{ margin: 0, fontSize: "20px" }}>Supervisely Hybrid QC Assistant Settings</h1>
@@ -200,6 +256,7 @@ export function Options() {
           <label style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <span>Default AI Mode</span>
             <select
+              data-testid="opt-default-mode"
               style={inputStyle}
               value={settings.defaultMode}
               onChange={(e) => void persist({ defaultMode: e.target.value as QCMode })}
@@ -210,10 +267,25 @@ export function Options() {
             </select>
           </label>
 
+          <label style={{ display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }}>
+            <span>Pre-Confirm Guard</span>
+            <input
+              type="checkbox"
+              data-testid="opt-confirm-guard-enabled"
+              checked={settings.confirmGuardEnabled}
+              onChange={(e) => void persist({ confirmGuardEnabled: e.target.checked })}
+            />
+          </label>
+
           <label style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <span>Pre-Confirm Guard Strictness</span>
             <select
-              style={inputStyle}
+              data-testid="opt-confirm-guard-strictness"
+              style={{
+                ...inputStyle,
+                opacity: settings.confirmGuardEnabled ? 1 : 0.55,
+              }}
+              disabled={!settings.confirmGuardEnabled}
               value={settings.confirmGuardStrictness}
               onChange={(e) =>
                 void persist({ confirmGuardStrictness: e.target.value as ConfirmGuardStrictness })
@@ -226,9 +298,20 @@ export function Options() {
           </label>
 
           <label style={{ display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }}>
+            <span>Show Canvas Overlays</span>
+            <input
+              type="checkbox"
+              data-testid="opt-overlay-visible"
+              checked={settings.overlayVisible}
+              onChange={(e) => void persist({ overlayVisible: e.target.checked })}
+            />
+          </label>
+
+          <label style={{ display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }}>
             <span>Auto-run QC on image switch</span>
             <input
               type="checkbox"
+              data-testid="opt-auto-run-switch"
               checked={settings.autoRunOnImageSwitch}
               onChange={(e) => void persist({ autoRunOnImageSwitch: e.target.checked })}
             />
@@ -284,6 +367,54 @@ export function Options() {
         <div
           style={{
             marginTop: "12px",
+            display: "flex",
+            flexWrap: "wrap",
+            gap: "8px",
+            alignItems: "center",
+          }}
+        >
+          <button
+            type="button"
+            data-testid="opt-run-qc"
+            onClick={() => void triggerTabAction("QC_TRIGGER_RUN_FROM_ACTION", "Run QC")}
+            style={{
+              padding: "7px 14px",
+              borderRadius: "6px",
+              border: "none",
+              background: "#6b4eff",
+              color: "#fff",
+              fontWeight: 600,
+              fontSize: "12px",
+              cursor: "pointer",
+            }}
+          >
+            Run QC Now (⌥Q)
+          </button>
+          <button
+            type="button"
+            data-testid="opt-toggle-topbar"
+            onClick={() => void triggerTabAction("QC_TOGGLE_PANEL_FROM_ACTION", "Show/Hide Top Bar")}
+            style={{
+              padding: "7px 14px",
+              borderRadius: "6px",
+              border: "1px solid #353852",
+              background: "#1c1e2e",
+              color: "#eef0f6",
+              fontWeight: 600,
+              fontSize: "12px",
+              cursor: "pointer",
+            }}
+          >
+            Show / Hide Top Bar
+          </button>
+          <span style={{ color: "#8c90a8", fontSize: "12px" }}>
+            Dispatches to open Supervisely labeling tabs
+          </span>
+        </div>
+
+        <div
+          style={{
+            marginTop: "12px",
             padding: "10px",
             background: "#0d0e17",
             borderRadius: "6px",
@@ -300,9 +431,92 @@ export function Options() {
         </div>
       </section>
 
-      {/* Section 3: Job Rule Profiles (YAML Import / Export) */}
+      {/* Section 3: Job Rule Profiles (YAML + Guided Overrides) */}
       <section style={cardStyle}>
-        <h2 style={{ margin: "0 0 10px", fontSize: "15px" }}>3. Job Rule Profiles (YAML)</h2>
+        <h2 style={{ margin: "0 0 10px", fontSize: "15px" }}>3. Job Rule Profiles (YAML &amp; Guided Form)</h2>
+        {parsedDraftProfile && (
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1fr 1fr",
+              gap: "10px",
+              padding: "10px",
+              marginBottom: "10px",
+              background: "#0d0e17",
+              borderRadius: "6px",
+              fontSize: "12px",
+            }}
+          >
+            <label style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "8px" }}>
+              <span>Min Missed-Object Confidence</span>
+              <input
+                type="number"
+                step="0.05"
+                min="0.1"
+                max="0.95"
+                style={{ ...inputStyle, width: "76px" }}
+                value={parsedDraftProfile.visionRules?.missedObjectMinConfidence ?? 0.45}
+                onChange={(e) => {
+                  const val = Number(e.target.value);
+                  if (Number.isFinite(val)) {
+                    updateDraftProfile((p) => ({
+                      ...p,
+                      visionRules: { ...p.visionRules, missedObjectMinConfidence: val },
+                    }));
+                  }
+                }}
+              />
+            </label>
+            <label style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "8px" }}>
+              <span>Min Laplacian Sharpness</span>
+              <input
+                type="number"
+                step="5"
+                min="0"
+                style={{ ...inputStyle, width: "76px" }}
+                value={parsedDraftProfile.visionRules?.minLaplacianSharpness ?? 35}
+                onChange={(e) => {
+                  const val = Number(e.target.value);
+                  if (Number.isFinite(val)) {
+                    updateDraftProfile((p) => ({
+                      ...p,
+                      visionRules: { ...p.visionRules, minLaplacianSharpness: val },
+                    }));
+                  }
+                }}
+              />
+            </label>
+            <label style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer" }}>
+              <input
+                type="checkbox"
+                checked={Boolean(parsedDraftProfile.workflowRules?.blockOnUnsavedSync)}
+                onChange={(e) =>
+                  updateDraftProfile((p) => ({
+                    ...p,
+                    workflowRules: { ...p.workflowRules, blockOnUnsavedSync: e.target.checked },
+                  }))
+                }
+              />
+              <span>Block on Unsaved Synchronize</span>
+            </label>
+            <label style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer" }}>
+              <input
+                type="checkbox"
+                checked={Boolean(parsedDraftProfile.workflowRules?.warnOnEmptyImageWithoutConfirm)}
+                onChange={(e) =>
+                  updateDraftProfile((p) => ({
+                    ...p,
+                    workflowRules: {
+                      ...p.workflowRules,
+                      warnOnEmptyImageWithoutConfirm: e.target.checked,
+                    },
+                  }))
+                }
+              />
+              <span>Warn on Empty Unconfirmed Image</span>
+            </label>
+          </div>
+        )}
         <div style={{ display: "flex", gap: "8px", marginBottom: "10px" }}>
           <select
             style={{ ...inputStyle, flex: 1 }}
@@ -362,20 +576,77 @@ export function Options() {
 
       {/* Section 4: Local Cache & Diagnostics */}
       <section style={cardStyle}>
-        <h2 style={{ margin: "0 0 10px", fontSize: "15px" }}>4. Local Diagnostics</h2>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            gap: "12px",
+            marginBottom: "10px",
+          }}
+        >
+          <h2 style={{ margin: 0, fontSize: "15px" }}>4. Local Cache &amp; Diagnostics</h2>
+          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            <span
+              data-testid="opt-backend-status-pill"
+              style={{
+                fontSize: "11px",
+                fontWeight: 700,
+                padding: "3px 10px",
+                borderRadius: "999px",
+                background: health ? "rgba(44, 225, 180, 0.14)" : "rgba(251, 191, 36, 0.14)",
+                color: health ? "#2ce1b4" : "#fbbf24",
+                border: `1px solid ${health ? "rgba(44, 225, 180, 0.35)" : "rgba(251, 191, 36, 0.35)"}`,
+              }}
+            >
+              {health ? `Local CV · ${health.device.toUpperCase()}` : "Offline · Rules"}
+            </span>
+            <button
+              type="button"
+              data-testid="opt-refresh-diagnostics"
+              onClick={() => void testBackend()}
+              style={{
+                padding: "4px 10px",
+                borderRadius: "6px",
+                border: "1px solid #353852",
+                background: "#1c1e2e",
+                color: "#eef0f6",
+                fontSize: "11px",
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              Refresh
+            </button>
+          </div>
+        </div>
         {health ? (
-          <pre
-            style={{
-              margin: 0,
-              padding: "10px",
-              background: "#0d0e17",
-              borderRadius: "6px",
-              fontSize: "11px",
-              overflowX: "auto",
-            }}
-          >
-            {JSON.stringify(health, null, 2)}
-          </pre>
+          <>
+            <div
+              data-testid="opt-cache-summary"
+              style={{
+                fontSize: "12px",
+                color: "#c5c8da",
+                marginBottom: "10px",
+              }}
+            >
+              Cache: {health.cacheStats.imageCount} image(s) (
+              {(health.cacheStats.diskBytes / (1024 * 1024)).toFixed(1)} MB) · Models:{" "}
+              {health.loadedModels.length > 0 ? health.loadedModels.join(", ") : "Lazy (idle)"}
+            </div>
+            <pre
+              style={{
+                margin: 0,
+                padding: "10px",
+                background: "#0d0e17",
+                borderRadius: "6px",
+                fontSize: "11px",
+                overflowX: "auto",
+              }}
+            >
+              {JSON.stringify(health, null, 2)}
+            </pre>
+          </>
         ) : (
           <div style={{ color: "#8c90a8" }}>Backend offline or not yet probed.</div>
         )}

@@ -103,6 +103,18 @@ export function projectImagePointToCss(
   ];
 }
 
+export function projectPolygonRingToSvgPoints(
+  ring: Point2D[],
+  transform: ResolvedAffineTransform,
+): string {
+  return ring
+    .map((pt) => {
+      const [px, py] = projectImagePointToCss(pt, transform);
+      return `${px.toFixed(1)},${py.toFixed(1)}`;
+    })
+    .join(" ");
+}
+
 export function projectBboxToCssRect(
   bbox: BoundingBoxTuple,
   transform: ResolvedAffineTransform,
@@ -201,6 +213,23 @@ export function CanvasOverlay({
     });
   }, [imageWidth, imageHeight, canvasRect, viewport, canvasTransform]);
 
+  const activeSimSet = useMemo(
+    () => new Set(simulatedCandidateIds),
+    [simulatedCandidateIds],
+  );
+  const focusedMissedIds = useMemo(() => {
+    const ids = new Set<string>();
+    if (!focusedFindingId) return ids;
+    for (const f of activeFindings) {
+      if (f.findingId === focusedFindingId) {
+        for (const mid of f.missedObjectIds) {
+          ids.add(mid);
+        }
+      }
+    }
+    return ids;
+  }, [activeFindings, focusedFindingId]);
+
   // Rasterize highlighted bitmap masks cleanly onto HiDPI-scaled backing <canvas>
   useEffect(() => {
     const canvas = rasterCanvasRef.current;
@@ -283,13 +312,20 @@ export function CanvasOverlay({
     return null;
   }
 
-  const inViewportMissed = activeMissedObjects.filter((m) => !m.outsideViewport);
-  const offViewportMissed = activeMissedObjects.filter((m) => m.outsideViewport);
+  const hasSceneSimulation = Boolean(sceneSimulation && sceneSimulation.candidates.length > 0);
+  const visibleMissedObjects = activeMissedObjects.filter((m) => {
+    if (focusedMissedIds.has(m.missedId)) {
+      return Boolean(m.outsideViewport);
+    }
+    // Suggested target boxes stay hidden after Run QC until Simulate All, Sim, or Locate is clicked.
+    if (hasSceneSimulation) {
+      return false;
+    }
+    return showBlueprintGuides;
+  });
+  const inViewportMissed = visibleMissedObjects.filter((m) => !m.outsideViewport);
+  const offViewportMissed = visibleMissedObjects.filter((m) => m.outsideViewport);
   const findingsWithRect = activeFindings.filter((f) => Boolean(f.focusRect) && f.category !== "missed_objects");
-  const activeSimSet = useMemo(
-    () => new Set(simulatedCandidateIds),
-    [simulatedCandidateIds],
-  );
   const simCandidates = sceneSimulation
     ? showBlueprintGuides
       ? sceneSimulation.candidates
@@ -336,7 +372,7 @@ export function CanvasOverlay({
             patternTransform="rotate(45 0 0)"
             patternUnits="userSpaceOnUse"
           >
-            <line x1="0" y1="0" x2="0" y2="8" stroke="rgba(251, 191, 36, 0.35)" strokeWidth="2" />
+            <line x1="0" y1="0" x2="0" y2="8" stroke="rgba(251, 191, 36, 0.16)" strokeWidth="1.25" />
           </pattern>
         </defs>
 
@@ -432,19 +468,34 @@ export function CanvasOverlay({
 
         {inViewportMissed.map((m) => {
           const rect = projectBboxToCssRect(m.bbox, transform);
+          const polyRings = (m.polygonPoints ?? []).filter((ring) => ring.length >= 3);
           return (
             <g key={m.missedId} data-testid={`qc-missed-box-${m.missedId}`}>
-              <rect
-                x={rect.x}
-                y={rect.y}
-                width={rect.width}
-                height={rect.height}
-                fill="rgba(56, 189, 248, 0.08)"
-                stroke="#38bdf8"
-                strokeWidth={2}
-                strokeDasharray="6 4"
-                vectorEffect="non-scaling-stroke"
-              />
+              {polyRings.length > 0 ? (
+                polyRings.map((ring, rIdx) => (
+                  <polygon
+                    key={`${m.missedId}_ring_${rIdx}`}
+                    points={projectPolygonRingToSvgPoints(ring, transform)}
+                    fill="rgba(56, 189, 248, 0.12)"
+                    stroke="#38bdf8"
+                    strokeWidth={2}
+                    strokeDasharray="6 4"
+                    vectorEffect="non-scaling-stroke"
+                  />
+                ))
+              ) : (
+                <rect
+                  x={rect.x}
+                  y={rect.y}
+                  width={rect.width}
+                  height={rect.height}
+                  fill="rgba(56, 189, 248, 0.08)"
+                  stroke="#38bdf8"
+                  strokeWidth={2}
+                  strokeDasharray="6 4"
+                  vectorEffect="non-scaling-stroke"
+                />
+              )}
               <text
                 x={Math.max(4, rect.x)}
                 y={Math.max(14, rect.y - 4)}
@@ -484,37 +535,78 @@ export function CanvasOverlay({
             );
           }
 
+          const truncTag = cand.recommendedObjectTags.find((t) => /^truncat/i.test(t.tagName));
           const isOccluded = cand.visibilityStatus === "occluded";
-          const stroke = isOccluded ? "#f59e0b" : "#38bdf8";
-          const fill = isOccluded ? "rgba(245, 158, 11, 0.08)" : "rgba(56, 189, 248, 0.07)";
-          const statusTag = isOccluded
-            ? `🏷 Occ (${
-                cand.occludedBySimIndices.length > 0
-                  ? `behind ${cand.occludedBySimIndices.map((i) => `#${i}`).join(",")}`
-                  : "occ"
-              })`
-            : cand.visibilityStatus === "border_truncated"
-              ? "Border"
-              : "Clear";
+          const isTruncated =
+            cand.visibilityStatus === "border_truncated" || Boolean(truncTag);
+          const truncLabel = truncTag?.tagName ?? "Truncation";
+          const stroke = isOccluded ? "#f59e0b" : isTruncated ? "#fb923c" : "#38bdf8";
+          const fill = isOccluded
+            ? "rgba(245, 158, 11, 0.08)"
+            : isTruncated
+              ? "rgba(251, 146, 60, 0.08)"
+              : "rgba(56, 189, 248, 0.07)";
+          const occDetail =
+            cand.occludedBySimIndices.length > 0
+              ? `behind ${cand.occludedBySimIndices.map((i) => `#${i}`).join(",")}`
+              : "occ";
+          const statusTag =
+            isOccluded && isTruncated
+              ? `🏷 Occ (${occDetail}) + ${truncLabel}`
+              : isOccluded
+                ? `🏷 Occ (${occDetail})`
+                : isTruncated
+                  ? `🏷 ${truncLabel}`
+                  : "Clear";
           const label = `#${cand.simIndex} ${cand.classTitle} · ${statusTag}`;
           const labelX = Math.max(4, rect.x);
           const labelY = Math.max(20, rect.y);
-          const pillW = Math.min(270, Math.max(72, Math.round(label.length * 6.3 + 12)));
+          const pillW = Math.min(340, Math.max(72, Math.round(label.length * 6.3 + 12)));
 
+          const polyRings = (cand.polygonPoints ?? []).filter((ring) => ring.length >= 3);
           return (
             <g key={cand.simId} data-testid={`qc-sim-guide-${cand.simIndex}`}>
-              <rect
-                x={rect.x}
-                y={rect.y}
-                width={rect.width}
-                height={rect.height}
-                rx={3}
-                fill={fill}
-                stroke={stroke}
-                strokeWidth={2}
-                strokeDasharray="6 4"
-                vectorEffect="non-scaling-stroke"
-              />
+              {polyRings.length > 0 ? (
+                <>
+                  <rect
+                    x={rect.x}
+                    y={rect.y}
+                    width={rect.width}
+                    height={rect.height}
+                    rx={3}
+                    fill="none"
+                    stroke={stroke}
+                    strokeOpacity={0.28}
+                    strokeWidth={1}
+                    strokeDasharray="3 4"
+                    vectorEffect="non-scaling-stroke"
+                  />
+                  {polyRings.map((ring, rIdx) => (
+                    <polygon
+                      key={`${cand.simId}_poly_${rIdx}`}
+                      points={projectPolygonRingToSvgPoints(ring, transform)}
+                      fill={fill}
+                      stroke={stroke}
+                      strokeWidth={2}
+                      strokeDasharray="6 4"
+                      vectorEffect="non-scaling-stroke"
+                    />
+                  ))}
+                </>
+              ) : (
+                <rect
+                  x={rect.x}
+                  y={rect.y}
+                  width={rect.width}
+                  height={rect.height}
+                  rx={3}
+                  fill={fill}
+                  stroke={stroke}
+                  strokeWidth={2}
+                  strokeDasharray="6 4"
+                  vectorEffect="non-scaling-stroke"
+                />
+              )}
               <rect
                 x={labelX}
                 y={labelY - 18}
@@ -547,6 +639,9 @@ export function CanvasOverlay({
         const clampedX = clamp(px, 12, Math.max(12, canvasRect.width - 155));
         const clampedY = clamp(py, 12, Math.max(12, canvasRect.height - 34));
         const isOccluded = cand.visibilityStatus === "occluded";
+        const isTruncated =
+          cand.visibilityStatus === "border_truncated" ||
+          cand.recommendedObjectTags.some((t) => /^truncat/i.test(t.tagName));
         return (
           <button
             key={`edge_sim_${cand.simId}`}
@@ -556,7 +651,7 @@ export function CanvasOverlay({
             style={{
               left: `${clampedX}px`,
               top: `${clampedY}px`,
-              borderColor: isOccluded ? "#f59e0b" : "#38bdf8",
+              borderColor: isOccluded ? "#f59e0b" : isTruncated ? "#fb923c" : "#38bdf8",
             }}
             onClick={() => onClickSimCandidate?.(cand)}
           >
@@ -627,7 +722,7 @@ export function CanvasOverlay({
             pointerEvents: "none",
           }}
         >
-          {activeMissedObjects.map((m) => {
+          {visibleMissedObjects.map((m) => {
             const cx = clamp((0.5 * (m.bbox[0] + m.bbox[2])) / Math.max(1, imageWidth), 0, 1);
             const cy = clamp((0.5 * (m.bbox[1] + m.bbox[3])) / Math.max(1, imageHeight), 0, 1);
             return (

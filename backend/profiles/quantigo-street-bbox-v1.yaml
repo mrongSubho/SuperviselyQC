@@ -16,6 +16,7 @@ tagRules:
     - "Low_Resolution"
   objectOnlyTags:
     - "Occlusion"
+    - "Truncation"
     - "Truncated"
     - "Crowded"
   occlusionOverlapIouThreshold: 0.10

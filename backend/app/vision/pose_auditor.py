@@ -218,17 +218,21 @@ class PoseAuditor:
                     if results[0].keypoints.conf is not None
                     else np.ones(kpts_xy.shape[:2], dtype=np.float32)
                 )
+                rgb_h, rgb_w = rgb.shape[:2]
+                sx = float(ctx.width) / float(max(rgb_w, 1))
+                sy = float(ctx.height) / float(max(rgb_h, 1))
                 for b_idx in range(len(boxes_xyxy)):
                     bx1, by1, bx2, by2 = boxes_xyxy[b_idx]
                     kmap: dict[tuple[str, str], tuple[float, float, float]] = {}
                     for k_idx, sem in COCO17_KEYPOINTS.items():
                         if k_idx < kpts_xy.shape[1]:
-                            kx, ky = float(kpts_xy[b_idx, k_idx, 0]), float(kpts_xy[b_idx, k_idx, 1])
+                            kx = float(kpts_xy[b_idx, k_idx, 0]) * sx
+                            ky = float(kpts_xy[b_idx, k_idx, 1]) * sy
                             kc = float(kpts_conf[b_idx, k_idx])
                             kmap[sem] = (kx, ky, kc)
                     preds.append(
                         PredictedPoseInstance(
-                            bbox=(float(bx1), float(by1), float(bx2), float(by2)),
+                            bbox=(float(bx1) * sx, float(by1) * sy, float(bx2) * sx, float(by2) * sy),
                             keypoints=kmap,
                         )
                     )

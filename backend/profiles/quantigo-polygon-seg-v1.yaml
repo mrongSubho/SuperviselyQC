@@ -13,6 +13,7 @@ tagRules:
   imageOnlyTags: []
   objectOnlyTags:
     - "Occlusion"
+    - "Truncation"
     - "Truncated"
   occlusionOverlapIouThreshold: 0.12
   occlusionCoverRatioThreshold: 0.18

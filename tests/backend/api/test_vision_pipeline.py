@@ -218,15 +218,17 @@ def test_sam_tightness_clipped_loose_and_drift(default_profile: RuleProfile) -> 
     )
     assert any(f.rule_id == "GEOM_BOX_LOOSE" for f in loose_findings)
 
-    # SAM mask shifts right past user box -> triggers GEOM_BOX_CLIPPED & GEOM_MASK_BOUNDARY_DRIFT
+    # SAM mask shifts right past user box on a polygon -> triggers GEOM_MASK_BOUNDARY_DRIFT,
+    # without firing bounding-box-only rules (GEOM_BOX_CLIPPED / GEOM_BOX_LOOSE).
     drift_mask = np.zeros((800, 1000), dtype=bool)
     drift_mask[410:560, 560:820] = True
     drift_findings = evaluate_sam_mask_against_figure(
         ctx, ctx.figures_by_id["fig_poly_drift"], drift_mask
     )
     rule_ids = {f.rule_id for f in drift_findings}
-    assert "GEOM_BOX_CLIPPED" in rule_ids
     assert "GEOM_MASK_BOUNDARY_DRIFT" in rule_ids
+    assert "GEOM_BOX_CLIPPED" not in rule_ids
+    assert "GEOM_BOX_LOOSE" not in rule_ids
 
 
 def test_pose_auditor_semantic_swap_and_drift(default_profile: RuleProfile) -> None:
